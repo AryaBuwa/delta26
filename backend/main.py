@@ -520,7 +520,7 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS — only delta.vercel.app in production
+# CORS — only delta26.vercel.app in production
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[FRONTEND_URL, "https://delta26.vercel.app"],
