@@ -1,0 +1,306 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Sora:wght@300;400;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── CSS DESIGN TOKENS ────────────────────────────────────────────────────── */
+:root {
+  --bg-base:    #0a0b0d;
+  --bg-raised:  #111318;
+  --bg-surface: #181c24;
+  --bg-overlay: #1e2230;
+
+  --line-dim:  rgba(255, 255, 255, 0.07);
+  --line-soft: rgba(255, 255, 255, 0.14);
+  --line-hard: rgba(255, 255, 255, 0.25);
+
+  --text-primary: #f0f0ee;
+  --text-muted:   rgba(240, 240, 238, 0.55);
+  --text-dim:     rgba(240, 240, 238, 0.28);
+
+  --accent:        #e8ff47;
+  --accent-blue:   #47b3ff;
+  --accent-red:    #ff4747;
+  --accent-green:  #47d18c;
+  --accent-orange: #ff8c47;
+
+  --font-sans: 'Sora', system-ui, sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, monospace;
+
+  --radius-sm: 2px;
+  --radius:    3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+
+  --transition: 150ms ease;
+}
+
+/* ── BASE RESET ───────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 100dvh;
+}
+
+/* ── SELECTION ────────────────────────────────────────────────────────────── */
+::selection {
+  background: var(--accent);
+  color: var(--bg-base);
+}
+
+/* ── SCROLLBAR ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--bg-base); }
+::-webkit-scrollbar-thumb { background: var(--line-soft); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--line-hard); }
+
+/* ── FOCUS RING ───────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+/* ── TYPOGRAPHY UTILITIES ─────────────────────────────────────────────────── */
+@layer utilities {
+  .font-mono   { font-family: var(--font-mono); }
+  .font-sans   { font-family: var(--font-sans); }
+
+  .text-primary { color: var(--text-primary); }
+  .text-muted   { color: var(--text-muted); }
+  .text-dim     { color: var(--text-dim); }
+  .text-accent  { color: var(--accent); }
+  .text-blue    { color: var(--accent-blue); }
+  .text-red     { color: var(--accent-red); }
+  .text-green   { color: var(--accent-green); }
+
+  /* Mono label — 10px, tracked, uppercase */
+  .label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  /* Score digits */
+  .score-display {
+    font-family: var(--font-mono);
+    font-size: 52px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    color: var(--text-primary);
+  }
+}
+
+/* ── COMPONENT BASE CLASSES ───────────────────────────────────────────────── */
+@layer components {
+
+  /* Card */
+  .card {
+    background: var(--bg-raised);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    position: relative;
+  }
+
+  .card-live::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+  }
+
+  .card-ht::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent-orange);
+  }
+
+  .card-ft::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--line-soft);
+  }
+
+  /* Divider */
+  .divider {
+    height: 1px;
+    background: var(--line-dim);
+    width: 100%;
+  }
+
+  /* Mono tag/badge */
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 3px 7px;
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .tag-live {
+    background: rgba(232, 255, 71, 0.1);
+    color: var(--accent);
+    border: 1px solid rgba(232, 255, 71, 0.25);
+  }
+
+  .tag-ht {
+    background: rgba(255, 140, 71, 0.1);
+    color: var(--accent-orange);
+    border: 1px solid rgba(255, 140, 71, 0.25);
+  }
+
+  .tag-ft {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-dim);
+    border: 1px solid var(--line-dim);
+  }
+
+  .tag-scheduled {
+    background: rgba(71, 179, 255, 0.08);
+    color: var(--accent-blue);
+    border: 1px solid rgba(71, 179, 255, 0.2);
+  }
+
+  .tag-ai {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-dim);
+    border: 1px solid var(--line-dim);
+    font-size: 9px;
+  }
+
+  .tag-penalties {
+    background: rgba(255, 71, 71, 0.1);
+    color: var(--accent-red);
+    border: 1px solid rgba(255, 71, 71, 0.25);
+  }
+
+  /* Vote button */
+  .vote-btn {
+    background: var(--bg-surface);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    padding: 12px 8px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    transition: border-color var(--transition), background var(--transition);
+    min-height: 56px;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+
+  .vote-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: rgba(232, 255, 71, 0.05);
+  }
+
+  .vote-btn:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  .vote-btn.selected {
+    border-color: var(--accent);
+    background: rgba(232, 255, 71, 0.1);
+  }
+
+  .vote-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Confidence bar */
+  .conf-bar {
+    height: 3px;
+    background: var(--bg-surface);
+    display: flex;
+    overflow: hidden;
+    gap: 1px;
+  }
+
+  /* Live dot */
+  .live-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse-dot 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.2; }
+  }
+
+  /* Page container */
+  .page {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 16px;
+  }
+
+  /* Nav */
+  .nav {
+    border-bottom: 1px solid var(--line-dim);
+    background: var(--bg-base);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    backdrop-filter: blur(8px);
+  }
+}
+
+/* ── ANIMATIONS ───────────────────────────────────────────────────────────── */
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.animate-slide-up { animation: slide-up 0.25s ease-out; }
+.animate-fade-in  { animation: fade-in 0.2s ease-out; }
+
+/* ── RECHARTS OVERRIDES ───────────────────────────────────────────────────── */
+.recharts-cartesian-axis-tick text { fill: var(--text-dim) !important; }
+.recharts-tooltip-wrapper { outline: none !important; }
+
+/* ── MOBILE TOUCH FIXES ───────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .score-display { font-size: 42px; }
+}

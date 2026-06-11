@@ -1,0 +1,83 @@
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+env/
+
+# uv
+.uv/
+uv.lock
+
+# Model files (versioned via DVC, not git)
+backend/models/*.pkl
+backend/models/*.joblib
+backend/models/*.json
+!backend/models/.gitkeep
+
+# DVC
+.dvc/cache
+.dvc/tmp
+*.dvc.lock
+
+# MLflow
+mlruns/
+mlflow.db
+
+# Logs
+*.log
+logs/
+
+# Google credentials (NEVER commit)
+*.json
+!backend/squads/*.json
+!backend/fixtures/*.json
+
+# Database
+*.db
+*.sqlite3
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+
+# Vercel
+.vercel
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
