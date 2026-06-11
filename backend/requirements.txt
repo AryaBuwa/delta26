@@ -1,59 +1,31 @@
-# PROJECT DELTA — Requirements
-
-# --- DATA FETCHING ---
 aiohttp==3.11.18
 httpx==0.27.2
 beautifulsoup4==4.12.3
 lxml==5.3.0
 tenacity==9.0.0
 tavily-python==0.5.0
-
-# --- LLM PARSING ---
 groq==0.12.0
-
-# --- DATA VALIDATION ---
-pydantic==2.5.3
-
-# --- ML / PREDICTION MODEL ---
+pydantic==2.3.0
 xgboost==2.1.3
 scikit-learn==1.5.2
 numpy==1.26.4
 polars==1.13.1
-
-# --- MLOPS ---
-mlflow==2.18.0
-
-# --- BACKEND FRAMEWORK ---
 fastapi==0.115.5
 uvicorn==0.32.1
 slowapi==0.1.9
 apscheduler==3.10.4
-
-# --- DATABASE ---
 sqlalchemy==2.0.36
 supabase==2.10.0
-
-# --- GOOGLE SHEETS ---
 gspread==6.1.4
 google-auth==2.36.0
 google-auth-oauthlib==1.2.1
-
-# --- ALERTS ---
 python-telegram-bot==22.7
-
-# --- AUTH / SECURITY ---
 passlib==1.7.4
 python-jose==3.3.0
-
-# --- UTILITIES ---
 python-dotenv==1.0.1
 loguru==0.7.2
 pytz==2024.2
 python-multipart==0.0.12
-
-# --- HISTORICAL DATA ---
 statsbombpy==1.4.2
-
-# --- DEVOPS ---
 pytest==8.3.3
 pytest-asyncio==0.24.0
