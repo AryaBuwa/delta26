@@ -1,0 +1,70 @@
+# ============================================================
+# PROJECT DELTA — Python Dependencies
+# Install with: uv pip install -r requirements.txt
+# Python version: 3.13
+# ============================================================
+
+# --- DATA FETCHING ---
+aiohttp==3.10.11
+httpx==0.27.2
+beautifulsoup4==4.12.3
+lxml==5.3.0                  # faster BS4 parser
+tenacity==9.0.0              # retry logic with backoff
+tavily-python==0.5.0
+linkup-sdk==0.2.4
+
+# --- LLM PARSING ---
+groq==0.12.0
+
+# --- DATA VALIDATION ---
+pydantic==2.9.2
+
+# --- ML / PREDICTION MODEL ---
+xgboost==2.1.3
+scikit-learn==1.5.2
+scipy==1.14.1
+numpy==2.1.3
+polars==1.13.1               # replaces pandas, 5-10x faster
+
+# --- MLOPS ---
+mlflow==2.18.0
+dvc==3.56.0
+dvc-gdrive==3.0.1            # DVC Google Drive remote
+
+# --- BACKEND FRAMEWORK ---
+fastapi==0.115.5
+uvicorn[standard]==0.32.1    # ASGI server with extras
+slowapi==0.1.9               # rate limiting for FastAPI
+apscheduler==3.10.4          # scheduled jobs
+
+# --- DATABASE ---
+sqlalchemy==2.0.36
+supabase==2.10.0
+
+# --- GOOGLE SHEETS ---
+gspread==6.1.4
+google-auth==2.36.0
+google-auth-oauthlib==1.2.1
+
+# --- ALERTS ---
+python-telegram-bot==22.7          # latest stable, Bot API 9.5, Python 3.13 compatible
+
+# --- AUTH / SECURITY ---
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+
+# --- UTILITIES ---
+python-dotenv==1.0.1
+loguru==0.7.2                # better logging than stdlib
+pytz==2024.2
+python-multipart==0.0.12     # for FastAPI form handling
+
+# --- HISTORICAL DATA (pre-tournament model training) ---
+statsbombpy==1.4.2               # StatsBomb open data (2022 WC simulation test)
+kaggle==1.7.4                    # Kaggle API for historical WC datasets
+
+# --- DEVOPS / TESTING ---
+pytest==8.3.3
+pytest-asyncio==0.24.0
+black==24.10.0               # code formatter
+httpx==0.27.2                # also used for TestClient
