@@ -51,9 +51,7 @@ mlflow.db
 logs/
 
 # Google credentials (NEVER commit)
-*.json
-!backend/squads/*.json
-!backend/fixtures/*.json
+backend/credentials/*.json
 
 # Database
 *.db
