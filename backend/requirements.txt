@@ -8,8 +8,8 @@ tavily-python==0.5.0
 
 # LLM + validation
 groq==0.12.0
-pydantic==2.9.2
-pydantic-settings==2.6.1
+pydantic
+pydantic-settings
 
 # ML
 xgboost==2.1.3
@@ -24,7 +24,7 @@ uvicorn[standard]==0.32.1
 slowapi==0.1.9
 python-multipart==0.0.12
 
-# Scheduler + jobs
+# Scheduler
 apscheduler==3.10.4
 
 # Database
