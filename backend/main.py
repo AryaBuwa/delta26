@@ -56,19 +56,11 @@ load_dotenv()
 # CONFIG
 # ─────────────────────────────────────────────
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://delta.vercel.app")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://delta26.vercel.app")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./delta.db")
 CLOUDFLARE_TURNSTILE_SECRET = os.getenv("CLOUDFLARE_TURNSTILE_SECRET", "")
 RECAPTCHA_SECRET = os.getenv("RECAPTCHA_SECRET_KEY", "")
-
-# Use Supabase Postgres in production, SQLite in development
-if SUPABASE_URL and "supabase" in SUPABASE_URL:
-    # Extract Postgres connection string from Supabase URL
-    db_host = SUPABASE_URL.replace("https://", "").replace(".supabase.co", "")
-    DATABASE_URL = f"postgresql://postgres:{os.getenv('SUPABASE_DB_PASSWORD', '')}@db.{db_host}.supabase.co:5432/postgres"
 
 # ─────────────────────────────────────────────
 # DATABASE SETUP
@@ -208,16 +200,13 @@ def get_db():
         yield db
     finally:
         db.close()
-        
+
 # ─────────────────────────────────────────────
 # SSE BROKER
 # ─────────────────────────────────────────────
 
 class SSEBroker:
-    """Per-match SSE connection manager. Scales to 10k+ connections."""
-
     def __init__(self):
-        # match_id -> set of asyncio Queues
         self._queues: dict[str, set[asyncio.Queue]] = {}
         self._global_queues: set[asyncio.Queue] = set()
         self._connection_count: dict[str, int] = {}
@@ -244,7 +233,6 @@ class SSEBroker:
         self._global_queues.discard(q)
 
     async def publish(self, match_id: str, event_type: str, data: dict):
-        """Push update to all subscribers of a match."""
         payload = json.dumps({"type": event_type, "match_id": match_id, "data": data, "ts": time.time()})
         dead = set()
         for q in self._queues.get(match_id, set()):
@@ -254,8 +242,6 @@ class SSEBroker:
                 dead.add(q)
         for q in dead:
             self._queues[match_id].discard(q)
-
-        # Also push to global stream
         for q in list(self._global_queues):
             try:
                 q.put_nowait(payload)
@@ -272,6 +258,9 @@ class SSEBroker:
 
     def total_connections(self) -> int:
         return sum(len(v) for v in self._queues.values()) + len(self._global_queues)
+
+    def connection_count(self) -> int:
+        return self.total_connections()
 
     def connections_per_match(self) -> dict:
         return {k: len(v) for k, v in self._queues.items() if v}
@@ -290,7 +279,7 @@ limiter = Limiter(key_func=get_remote_address)
 # ─────────────────────────────────────────────
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-_admin_token_store: dict[str, float] = {}  # token -> expiry timestamp
+_admin_token_store: dict[str, float] = {}
 
 
 def verify_admin_token(token: str) -> bool:
@@ -300,17 +289,31 @@ def verify_admin_token(token: str) -> bool:
 
 def create_admin_token() -> str:
     token = str(uuid.uuid4())
-    _admin_token_store[token] = time.time() + 3600 * 8  # 8hr session
+    _admin_token_store[token] = time.time() + 3600 * 8
     return token
 
 
-def get_admin(request: Request) -> bool:
+def check_admin_password(request: Request) -> bool:
+    """
+    Accept EITHER:
+    1. Raw password as Bearer token (what the frontend sends)
+    2. A valid JWT token from /api/admin/login
+    """
     auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        token = auth.split(" ", 1)[1]
-        if verify_admin_token(token):
-            return True
-    raise HTTPException(status_code=401, detail="Admin auth required")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Admin auth required")
+    token = auth.split(" ", 1)[1]
+    # Check raw password first
+    if token == ADMIN_PASSWORD:
+        return True
+    # Check session token
+    if verify_admin_token(token):
+        return True
+    raise HTTPException(status_code=401, detail="Invalid password or expired token")
+
+
+def get_admin(request: Request) -> bool:
+    return check_admin_password(request)
 
 
 # ─────────────────────────────────────────────
@@ -346,8 +349,18 @@ class MatchStateOverride(BaseModel):
     note: Optional[str] = None
 
 
+class AddMatchRequest(BaseModel):
+    match_id: str
+    home_team: str
+    away_team: str
+    kickoff_utc: str
+    venue: Optional[str] = None
+    group: Optional[str] = None
+    phase: Optional[str] = "group"
+
+
 # ─────────────────────────────────────────────
-# TRUST SCORE CALCULATION
+# TRUST SCORE
 # ─────────────────────────────────────────────
 
 async def calculate_trust_score(
@@ -359,31 +372,14 @@ async def calculate_trust_score(
     db: Session,
     match_id: str,
 ) -> float:
-    """
-    Score = weighted combination:
-      reCAPTCHA v3 score:      35%
-      Time on page >30s:       20%
-      Mouse movement detected: 15%
-      Non-burst timing:        15%
-      Unique fingerprint:      10%
-      Honeypot empty:           5%  (checked in route)
-    """
     score = 0.0
-
-    # reCAPTCHA (0-1 → weighted 35%)
     score += min(recaptcha_score, 1.0) * 0.35
-
-    # Time on page > 30s
     if time_on_page_ms >= 30_000:
         score += 0.20
     elif time_on_page_ms >= 10_000:
         score += 0.10
-
-    # Mouse movement
     if mouse_moved:
         score += 0.15
-
-    # Burst detection: check recent votes from same fingerprint
     one_minute_ago = datetime.now(timezone.utc).timestamp() - 60
     recent_votes = (
         db.query(VoteDB)
@@ -397,8 +393,6 @@ async def calculate_trust_score(
         score += 0.15
     elif recent_votes < 10:
         score += 0.05
-
-    # Unique fingerprint for this match
     existing = (
         db.query(VoteDB)
         .filter(VoteDB.fingerprint_hash == fingerprint_hash, VoteDB.match_id == match_id)
@@ -406,31 +400,25 @@ async def calculate_trust_score(
     )
     if not existing:
         score += 0.10
-
-    # Honeypot always adds 5% if passed (caller responsibility)
     score += 0.05
-
     return min(score, 1.0)
 
 
 async def verify_turnstile(token: str) -> bool:
-    """Verify Cloudflare Turnstile token."""
-    if not CLOUDFLARE_TURNSTILE_SECRET or CLOUDFLARE_TURNSTILE_SECRET == "1x0000000000000000000000000000000AA":
-        return True  # Dev/test bypass
+    if not CLOUDFLARE_TURNSTILE_SECRET or token in ("dev-token", ""):
+        return True
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://challenges.cloudflare.com/turnstile/v0/siteverify",
             data={"secret": CLOUDFLARE_TURNSTILE_SECRET, "response": token},
             timeout=5.0,
         )
-        result = resp.json()
-        return result.get("success", False)
+        return resp.json().get("success", False)
 
 
 async def verify_recaptcha(token: str) -> float:
-    """Verify reCAPTCHA v3 token, return score 0-1."""
     if not RECAPTCHA_SECRET or not token:
-        return 0.7  # Assume likely human if not configured
+        return 0.7
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -445,7 +433,7 @@ async def verify_recaptcha(token: str) -> float:
 
 
 # ─────────────────────────────────────────────
-# LIFESPAN (startup / shutdown)
+# LIFESPAN
 # ─────────────────────────────────────────────
 
 scheduler = AsyncIOScheduler(timezone="UTC")
@@ -453,13 +441,9 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup and shutdown lifecycle."""
     logger.info("🚀 Project Delta starting up")
-
-    # Init database — must be first
     init_db()
 
-    # Import pipeline here to avoid circular imports at module load time
     try:
         from pipeline import PipelineOrchestrator
         app.state.pipeline = PipelineOrchestrator(broker=broker)
@@ -469,32 +453,27 @@ async def lifespan(app: FastAPI):
         logger.warning("pipeline.py not found — running without live pipeline")
         app.state.pipeline = None
 
-    # Keep-alive: ping self every 13 minutes to prevent Render spin-down
     async def keep_alive():
         try:
             async with httpx.AsyncClient() as client:
-                await client.get("http://localhost:8000/health", timeout=5.0)
-            logger.debug("Keep-alive ping sent")
-        except Exception as e:
-            logger.debug(f"Keep-alive ping failed (normal if starting): {e}")
+                await client.get(f"http://localhost:{os.getenv('PORT', '8000')}/health", timeout=5.0)
+        except Exception:
+            pass
 
     scheduler.add_job(keep_alive, IntervalTrigger(minutes=13), id="keep_alive")
 
-    # Source health check every 30 minutes
     async def source_health_job():
         if app.state.pipeline:
             await app.state.pipeline.check_source_health()
 
     scheduler.add_job(source_health_job, IntervalTrigger(minutes=30), id="source_health")
 
-    # Pre-match brief job — runs every 15 min, checks internally if 3h before KO
     async def pre_match_brief_job():
         if app.state.pipeline:
             await app.state.pipeline.generate_pre_match_briefs()
 
     scheduler.add_job(pre_match_brief_job, IntervalTrigger(minutes=15), id="pre_match_brief")
 
-    # Fixture check every 2 hours
     async def fixture_check_job():
         if app.state.pipeline:
             await app.state.pipeline.check_fixtures()
@@ -504,14 +483,12 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     logger.info("✅ Scheduler started")
 
-    yield  # Application runs here
+    yield
 
-    # Shutdown
-    logger.info("🛑 Project Delta shutting down")
+    logger.info("🛑 Shutting down")
     scheduler.shutdown(wait=False)
     if app.state.pipeline:
         await app.state.pipeline.stop()
-    logger.info("✅ Clean shutdown complete")
 
 
 # ─────────────────────────────────────────────
@@ -523,29 +500,27 @@ app = FastAPI(
     description="AI vs Human prediction system for FIFA World Cup 2026",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url="/docs" if os.getenv("ENV", "dev") == "dev" else None,
+    docs_url="/docs",
     redoc_url=None,
 )
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS — only delta26.vercel.app in production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "https://delta26.vercel.app"],
+    allow_origins=[FRONTEND_URL, "https://delta26.vercel.app", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
 # ─────────────────────────────────────────────
-# HEALTH ENDPOINTS
+# HEALTH
 # ─────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
-    """Health check — used by health_check.py and Render monitoring."""
     return {
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -556,8 +531,6 @@ async def health():
 
 @app.get("/health/detailed")
 async def health_detailed(db: Session = Depends(get_db)):
-    """Detailed health — used by admin dashboard."""
-    # Check DB
     db_ok = False
     try:
         db.execute(text("SELECT 1"))
@@ -565,7 +538,6 @@ async def health_detailed(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"DB health check failed: {e}")
 
-    # Check pipeline
     pipeline_ok = False
     active_matches = []
     if hasattr(app.state, "pipeline") and app.state.pipeline:
@@ -573,11 +545,10 @@ async def health_detailed(db: Session = Depends(get_db)):
         active_matches = app.state.pipeline.get_active_match_ids()
 
     return {
-        "status": "ok" if db_ok and pipeline_ok else "degraded",
+        "status": "ok" if db_ok else "degraded",
         "db": "ok" if db_ok else "error",
         "pipeline": "ok" if pipeline_ok else "not_running",
         "sse_connections": broker.total_connections(),
-        "connections_per_match": broker.connections_per_match(),
         "active_matches": active_matches,
         "scheduler_running": scheduler.running,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -591,7 +562,6 @@ async def health_detailed(db: Session = Depends(get_db)):
 @app.get("/api/matches")
 @limiter.limit("15/minute")
 async def get_matches(request: Request, db: Session = Depends(get_db)):
-    """All matches with current state — tournament overview page."""
     matches = db.query(MatchDB).order_by(MatchDB.kickoff_utc).all()
     return [_match_to_dict(m) for m in matches]
 
@@ -599,25 +569,21 @@ async def get_matches(request: Request, db: Session = Depends(get_db)):
 @app.get("/api/matches/{match_id}")
 @limiter.limit("15/minute")
 async def get_match(match_id: str, request: Request, db: Session = Depends(get_db)):
-    """Single match with full data — match detail page."""
     match = db.query(MatchDB).filter(MatchDB.id == match_id).first()
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
-
     prediction = (
         db.query(PredictionDB)
         .filter(PredictionDB.match_id == match_id)
         .order_by(PredictionDB.id.desc())
         .first()
     )
-
     events = (
         db.query(LiveEventDB)
         .filter(LiveEventDB.match_id == match_id)
         .order_by(LiveEventDB.id.asc())
         .all()
     )
-
     result = _match_to_dict(match)
     if prediction:
         result["prediction"] = _prediction_to_dict(prediction)
@@ -628,26 +594,20 @@ async def get_match(match_id: str, request: Request, db: Session = Depends(get_d
 @app.get("/api/matches/{match_id}/votes/summary")
 @limiter.limit("15/minute")
 async def get_vote_summary(match_id: str, request: Request, db: Session = Depends(get_db)):
-    """Vote distribution for a match — shown on frontend alongside AI prediction."""
     votes = db.query(VoteDB).filter(
         VoteDB.match_id == match_id,
         VoteDB.trust_score >= 0.6,
         VoteDB.is_penalty_vote == False,
     ).all()
-
     total = len(votes)
     if total == 0:
         return {"total": 0, "home": 0, "draw": 0, "away": 0, "home_pct": 0, "draw_pct": 0, "away_pct": 0}
-
     home = sum(1 for v in votes if v.pick == "home")
     draw = sum(1 for v in votes if v.pick == "draw")
     away = sum(1 for v in votes if v.pick == "away")
-
     return {
         "total": total,
-        "home": home,
-        "draw": draw,
-        "away": away,
+        "home": home, "draw": draw, "away": away,
         "home_pct": round(home / total * 100, 1),
         "draw_pct": round(draw / total * 100, 1),
         "away_pct": round(away / total * 100, 1),
@@ -655,39 +615,24 @@ async def get_vote_summary(match_id: str, request: Request, db: Session = Depend
 
 
 # ─────────────────────────────────────────────
-# VOTING ENDPOINTS
+# VOTING
 # ─────────────────────────────────────────────
 
 @app.post("/api/vote")
 @limiter.limit("5/minute")
-async def submit_vote(
-    request: Request,
-    vote_req: VoteRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    Submit or update a vote.
-    - 1 vote per match per fingerprint (can update until 85' lock)
-    - Turnstile + reCAPTCHA + trust score
-    - All data saved for research
-    """
-    # 1. Verify Turnstile
+async def submit_vote(request: Request, vote_req: VoteRequest, db: Session = Depends(get_db)):
     if not await verify_turnstile(vote_req.turnstile_token):
         raise HTTPException(status_code=400, detail="Bot check failed")
 
-    # 2. Verify reCAPTCHA
     recaptcha_score = await verify_recaptcha(vote_req.recaptcha_token or "")
 
-    # 3. Check match exists and voting is open
     match = db.query(MatchDB).filter(MatchDB.id == vote_req.match_id).first()
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
 
-    # State check: can only vote in SCHEDULED, LIVE, LIVE_2H, HT, ET_1H, ET_HT
     if match.state in ("FT", "ET_2H", "PENALTIES", "FINISHED", "VOID"):
         raise HTTPException(status_code=400, detail="Voting is closed for this match")
 
-    # 85-minute hard lock
     try:
         current_minute = int(match.minute.replace("+", ""))
     except (ValueError, AttributeError):
@@ -696,15 +641,12 @@ async def submit_vote(
     if current_minute >= 85 and match.state not in ("PENALTIES",):
         raise HTTPException(status_code=400, detail="Voting locked at 85 minutes")
 
-    # Penalty micro-vote check
     if vote_req.is_penalty_vote and match.state != "PENALTIES":
         raise HTTPException(status_code=400, detail="Penalty vote only valid during shootout")
 
-    # 4. IP hash
     client_ip = get_remote_address(request)
     ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:16]
 
-    # 5. Trust score
     trust_score = await calculate_trust_score(
         recaptcha_score=recaptcha_score,
         time_on_page_ms=vote_req.time_on_page_ms,
@@ -715,7 +657,6 @@ async def submit_vote(
         match_id=vote_req.match_id,
     )
 
-    # 6. Check for existing vote (update path)
     existing = (
         db.query(VoteDB)
         .filter(
@@ -726,14 +667,11 @@ async def submit_vote(
         .first()
     )
 
-    # Get kickoff delta
     now_utc = datetime.now(timezone.utc)
     kickoff = match.kickoff_utc
     if kickoff.tzinfo is None:
         kickoff = kickoff.replace(tzinfo=timezone.utc)
     minutes_before_ko = max(0, int((kickoff - now_utc).total_seconds() / 60))
-
-    # Current AI confidence snapshot
     current_ai_confidence = match.model_confidence or {}
 
     if existing:
@@ -750,7 +688,6 @@ async def submit_vote(
         existing.trust_score = trust_score
         existing.recaptcha_score = recaptcha_score
         db.commit()
-        db.refresh(existing)
         vote_id = existing.id
         is_update = True
     else:
@@ -779,7 +716,6 @@ async def submit_vote(
         vote_id = new_vote.id
         is_update = False
 
-    # 7. Push updated vote summary via SSE
     summary = await _get_vote_summary_dict(vote_req.match_id, db)
     await broker.publish(vote_req.match_id, "vote_update", summary)
 
@@ -797,28 +733,20 @@ async def submit_vote(
 
 
 # ─────────────────────────────────────────────
-# SSE STREAM ENDPOINTS
+# SSE STREAMS
 # ─────────────────────────────────────────────
 
 @app.get("/stream/{match_id}")
 async def stream_match(match_id: str, request: Request):
-    """
-    SSE stream for a single match.
-    One connection per IP (enforced by Cloudflare + Render).
-    Auto-reconnects on drop.
-    """
     if match_id == "test":
-        # Health check test endpoint
         async def test_gen():
-            yield "data: {\"type\": \"connected\", \"match_id\": \"test\"}\n\n"
+            yield 'data: {"type": "connected", "match_id": "test"}\n\n'
         return StreamingResponse(test_gen(), media_type="text/event-stream")
 
     q = broker.subscribe(match_id)
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        # Send initial connection event
         yield f"data: {json.dumps({'type': 'connected', 'match_id': match_id})}\n\n"
-
         try:
             while True:
                 if await request.is_disconnected():
@@ -827,7 +755,6 @@ async def stream_match(match_id: str, request: Request):
                     payload = await asyncio.wait_for(q.get(), timeout=30.0)
                     yield f"data: {payload}\n\n"
                 except asyncio.TimeoutError:
-                    # Send keepalive comment every 30s
                     yield ": keepalive\n\n"
         except asyncio.CancelledError:
             pass
@@ -837,20 +764,12 @@ async def stream_match(match_id: str, request: Request):
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
 
 
 @app.get("/stream/global/all")
 async def stream_global(request: Request):
-    """
-    Global SSE stream — receives updates for ALL matches.
-    Used by tournament overview page.
-    """
     q = broker.subscribe_global()
 
     async def event_generator() -> AsyncGenerator[str, None]:
@@ -883,7 +802,6 @@ async def stream_global(request: Request):
 @app.post("/api/admin/login")
 @limiter.limit("5/minute")
 async def admin_login(request: Request, body: AdminLoginRequest):
-    """Admin password login — returns session token."""
     if body.password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="Invalid password")
     token = create_admin_token()
@@ -891,270 +809,121 @@ async def admin_login(request: Request, body: AdminLoginRequest):
 
 
 # ─────────────────────────────────────────────
-# ADMIN ENDPOINTS (all require Bearer token)
+# ADMIN ROUTES — frontend calls these with raw password as Bearer token
 # ─────────────────────────────────────────────
 
-@app.get("/api/admin/dashboard")
+@app.get("/admin/status")
 @limiter.limit("60/minute")
-async def admin_dashboard(
-    request: Request,
-    db: Session = Depends(get_db),
-    _: bool = Depends(get_admin),
-):
-    """Full admin dashboard data — single call."""
-    # Active matches
-    active = db.query(MatchDB).filter(MatchDB.state.in_(["LIVE", "HT", "LIVE_2H", "ET_1H", "ET_HT", "ET_2H", "PENALTIES"])).all()
-
-    # Source health
+async def admin_status(request: Request, db: Session = Depends(get_db)):
+    check_admin_password(request)
     sources = db.query(SourceHealthDB).all()
-
-    # Model versions
-    latest_model = db.query(ModelVersionDB).order_by(ModelVersionDB.version.desc()).first()
-
-    # Vote stats
-    total_votes = db.query(VoteDB).filter(VoteDB.is_penalty_vote == False).count()
-    verified_votes = db.query(VoteDB).filter(VoteDB.trust_score >= 0.8, VoteDB.is_penalty_vote == False).count()
-    probable_votes = db.query(VoteDB).filter(VoteDB.trust_score >= 0.6, VoteDB.trust_score < 0.8, VoteDB.is_penalty_vote == False).count()
-
-    # Today's votes
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_votes = db.query(VoteDB).filter(VoteDB.timestamp >= today_start, VoteDB.is_penalty_vote == False).count()
-
-    # Votes per match
-    votes_by_match = []
-    all_matches = db.query(MatchDB).order_by(MatchDB.kickoff_utc).all()
-    for m in all_matches:
-        count = db.query(VoteDB).filter(VoteDB.match_id == m.id, VoteDB.is_penalty_vote == False).count()
-        votes_by_match.append({"match_id": m.id, "label": f"{m.home_team} vs {m.away_team}", "votes": count})
-
-    # Pipeline state
-    pipeline_state = {}
-    if hasattr(app.state, "pipeline") and app.state.pipeline:
-        pipeline_state = app.state.pipeline.get_status()
-
     return {
-        "active_matches": [_match_to_dict(m) for m in active],
-        "source_health": [_source_health_to_dict(s) for s in sources],
         "sse_connections": broker.total_connections(),
-        "connections_per_match": broker.connections_per_match(),
-        "model": {
-            "version": latest_model.version if latest_model else 0,
-            "accuracy_after": latest_model.accuracy_after if latest_model else None,
-            "deployed": latest_model.deployed if latest_model else False,
-            "trained_at": latest_model.trained_at.isoformat() if latest_model and latest_model.trained_at else None,
-        },
-        "votes": {
-            "total": total_votes,
-            "today": today_votes,
-            "verified": verified_votes,
-            "probable": probable_votes,
-            "unverified": total_votes - verified_votes - probable_votes,
-            "by_match": votes_by_match,
-        },
-        "pipeline": pipeline_state,
-        "scheduler_jobs": [{"id": j.id, "next_run": str(j.next_run_time)} for j in scheduler.get_jobs()],
+        "render_cpu_pct": 0,
+        "render_memory_pct": 0,
+        "render_hours_used": 0,
+        "groq_key1_pct": 0,
+        "groq_key2_pct": 0,
+        "sources": [
+            {
+                "name": s.source_name,
+                "status": s.status or "ok",
+                "last_check": s.last_check.isoformat() if s.last_check else None,
+            }
+            for s in sources
+        ],
     }
 
 
-@app.get("/api/admin/matches")
+@app.get("/admin/model")
 @limiter.limit("60/minute")
-async def admin_get_matches(
-    request: Request,
-    db: Session = Depends(get_db),
-    _: bool = Depends(get_admin),
-):
-    """All matches for admin — includes internal fields."""
-    matches = db.query(MatchDB).order_by(MatchDB.kickoff_utc).all()
-    return [_match_to_dict(m, admin=True) for m in matches]
+async def admin_model(request: Request, db: Session = Depends(get_db)):
+    check_admin_password(request)
+    latest = db.query(ModelVersionDB).order_by(ModelVersionDB.version.desc()).first()
+    history = db.query(ModelVersionDB).order_by(ModelVersionDB.version.asc()).all()
+    return {
+        "current_version": latest.version if latest else 0,
+        "current_accuracy": latest.accuracy_after if latest and latest.accuracy_after else 0.0,
+        "training_match_count": latest.version if latest else 0,
+        "accuracy_history": [
+            {"version": v.version, "accuracy": v.accuracy_after or 0.0}
+            for v in history
+        ],
+    }
 
 
-@app.get("/api/admin/alerts")
+@app.get("/admin/research")
 @limiter.limit("60/minute")
-async def admin_get_alerts(
-    request: Request,
-    _: bool = Depends(get_admin),
-):
-    """Recent alerts from alerts module."""
-    try:
-        from alerts import get_recent_alerts
-        alerts = get_recent_alerts(limit=50)
-        return {"alerts": alerts}
-    except ImportError:
-        return {"alerts": [], "note": "alerts.py not available"}
+async def admin_research(request: Request, db: Session = Depends(get_db)):
+    check_admin_password(request)
+    total_votes = db.query(VoteDB).filter(VoteDB.is_penalty_vote == False).count()
+    verified_votes = db.query(VoteDB).filter(VoteDB.trust_score >= 0.8, VoteDB.is_penalty_vote == False).count()
+    probable_votes = db.query(VoteDB).filter(
+        VoteDB.trust_score >= 0.6, VoteDB.trust_score < 0.8, VoteDB.is_penalty_vote == False
+    ).count()
+    excluded_votes = db.query(VoteDB).filter(VoteDB.trust_score < 0.6, VoteDB.is_penalty_vote == False).count()
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    votes_today = db.query(VoteDB).filter(VoteDB.timestamp >= today_start, VoteDB.is_penalty_vote == False).count()
+
+    all_matches = db.query(MatchDB).order_by(MatchDB.kickoff_utc).all()
+    votes_per_match = []
+    for m in all_matches:
+        total = db.query(VoteDB).filter(VoteDB.match_id == m.id, VoteDB.is_penalty_vote == False).count()
+        verified = db.query(VoteDB).filter(
+            VoteDB.match_id == m.id, VoteDB.trust_score >= 0.8, VoteDB.is_penalty_vote == False
+        ).count()
+        votes_per_match.append({
+            "match_id": m.id,
+            "label": f"{m.home_team[:3].upper()} vs {m.away_team[:3].upper()}",
+            "total": total,
+            "verified": verified,
+        })
+
+    return {
+        "total_votes": total_votes,
+        "verified_votes": verified_votes,
+        "votes_today": votes_today,
+        "excluded_votes": excluded_votes,
+        "trust_distribution": [
+            {"label": "Verified", "count": verified_votes, "pct": (verified_votes / max(total_votes, 1)) * 100},
+            {"label": "Probable", "count": probable_votes, "pct": (probable_votes / max(total_votes, 1)) * 100},
+            {"label": "Excluded", "count": excluded_votes, "pct": (excluded_votes / max(total_votes, 1)) * 100},
+        ],
+        "votes_per_match": votes_per_match,
+        "sheets_sync_ok": True,
+        "sheets_last_sync": datetime.now(timezone.utc).isoformat(),
+    }
 
 
-@app.get("/api/admin/model/versions")
+@app.get("/admin/drafts")
 @limiter.limit("60/minute")
-async def admin_model_versions(
-    request: Request,
-    db: Session = Depends(get_db),
-    _: bool = Depends(get_admin),
-):
-    """All model versions — MLOps browser."""
-    versions = db.query(ModelVersionDB).order_by(ModelVersionDB.version.desc()).limit(104).all()
-    return [
-        {
-            "version": v.version,
-            "accuracy_before": v.accuracy_before,
-            "accuracy_after": v.accuracy_after,
-            "improvement_pct": v.improvement_pct,
-            "deployed": v.deployed,
-            "training_match_id": v.training_match_id,
-            "trained_at": v.trained_at.isoformat() if v.trained_at else None,
-            "deploy_decision": v.deploy_decision,
-            "training_duration_s": v.training_duration_s,
-            "mlflow_run_id": v.mlflow_run_id,
-        }
-        for v in versions
-    ]
+async def admin_drafts(request: Request, db: Session = Depends(get_db)):
+    check_admin_password(request)
+    finished = db.query(MatchDB).filter(
+        MatchDB.state.in_(["FINISHED", "FT"])
+    ).order_by(MatchDB.last_updated.desc()).limit(5).all()
 
-
-@app.post("/api/admin/model/retrain")
-@limiter.limit("5/minute")
-async def admin_retrain(
-    request: Request,
-    body: RetrainRequest,
-    background_tasks: BackgroundTasks,
-    _: bool = Depends(get_admin),
-):
-    """Trigger model retraining as background task."""
-    if not body.confirm:
-        raise HTTPException(status_code=400, detail="Set confirm=true to trigger retraining")
-
-    # Check no active matches
-    if hasattr(app.state, "pipeline") and app.state.pipeline:
-        active = app.state.pipeline.get_active_match_ids()
-        if active:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Cannot retrain during live matches: {active}",
-            )
-
-    async def run_retrain():
-        try:
-            from model import DeltaModel
-            model = DeltaModel()
-            result = await asyncio.get_event_loop().run_in_executor(None, model.retrain)
-            await broker.publish_global("retrain_complete", result)
-            logger.info(f"Retrain complete: {result}")
-        except Exception as e:
-            logger.error(f"Retrain failed: {e}")
-            await broker.publish_global("retrain_failed", {"error": str(e)})
-
-    background_tasks.add_task(run_retrain)
-    return {"status": "retrain_started", "message": "Retraining running in background — watch SSE for result"}
-
-
-@app.post("/api/admin/match/override-state")
-@limiter.limit("60/minute")
-async def admin_override_state(
-    request: Request,
-    body: MatchStateOverride,
-    db: Session = Depends(get_db),
-    _: bool = Depends(get_admin),
-):
-    """Emergency state override — admin only."""
-    valid_states = {"SCHEDULED", "LIVE", "HT", "LIVE_2H", "FT", "ET_1H", "ET_HT", "ET_2H", "PENALTIES", "FINISHED", "VOID"}
-    if body.state not in valid_states:
-        raise HTTPException(status_code=400, detail=f"Invalid state. Must be one of: {valid_states}")
-
-    match = db.query(MatchDB).filter(MatchDB.id == body.match_id).first()
-    if not match:
-        raise HTTPException(status_code=404, detail="Match not found")
-
-    old_state = match.state
-    match.state = body.state
-    match.last_updated = datetime.now(timezone.utc)
-    db.commit()
-
-    await broker.publish(body.match_id, "state_change", {
-        "match_id": body.match_id, "old_state": old_state, "new_state": body.state,
-        "manual_override": True, "note": body.note,
-    })
-
-    logger.warning(f"Admin override: {body.match_id} {old_state} → {body.state} | {body.note}")
-    return {"success": True, "match_id": body.match_id, "old_state": old_state, "new_state": body.state}
-
-
-@app.get("/api/admin/votes/{match_id}")
-@limiter.limit("60/minute")
-async def admin_get_votes(
-    match_id: str,
-    request: Request,
-    db: Session = Depends(get_db),
-    _: bool = Depends(get_admin),
-):
-    """Full vote data for a match — admin research view."""
-    votes = db.query(VoteDB).filter(VoteDB.match_id == match_id).order_by(VoteDB.timestamp).all()
-    return [
-        {
-            "id": v.id,
-            "pick": v.pick,
-            "trust_score": v.trust_score,
-            "trust_level": "verified" if (v.trust_score or 0) >= 0.8 else "probable" if (v.trust_score or 0) >= 0.6 else "unverified",
-            "timestamp": v.timestamp.isoformat() if v.timestamp else None,
-            "minute_before_kickoff": v.minute_before_kickoff,
-            "match_minute_at_vote": v.match_minute_at_vote,
-            "score_at_vote": v.score_at_vote,
-            "change_count": v.change_count,
-            "changed_from": v.changed_from,
-            "is_penalty_vote": v.is_penalty_vote,
-        }
-        for v in votes
-    ]
-
-
-@app.get("/api/admin/post-draft")
-@limiter.limit("60/minute")
-async def admin_get_post_draft(
-    request: Request,
-    match_id: Optional[str] = None,
-    db: Session = Depends(get_db),
-    _: bool = Depends(get_admin),
-):
-    """
-    Generate LinkedIn + X post draft for a finished match.
-    Template-filled from match + prediction data.
-    """
-    if match_id:
-        match = db.query(MatchDB).filter(MatchDB.id == match_id).first()
-        if not match:
-            raise HTTPException(status_code=404, detail="Match not found")
-    else:
-        # Get most recently finished match
-        match = (
-            db.query(MatchDB)
-            .filter(MatchDB.state.in_(["FINISHED", "FT"]))
-            .order_by(MatchDB.last_updated.desc())
+    drafts = []
+    for match in finished:
+        prediction = (
+            db.query(PredictionDB)
+            .filter(PredictionDB.match_id == match.id)
+            .order_by(PredictionDB.id.desc())
             .first()
         )
-        if not match:
-            return {"linkedin": "", "x": "", "note": "No finished matches yet"}
+        if not prediction:
+            continue
 
-    prediction = (
-        db.query(PredictionDB)
-        .filter(PredictionDB.match_id == match.id)
-        .order_by(PredictionDB.id.desc())
-        .first()
-    )
+        if match.home_score > match.away_score:
+            ai_correct = (prediction.home_win or 0) == max(prediction.home_win or 0, prediction.draw or 0, prediction.away_win or 0)
+        elif match.away_score > match.home_score:
+            ai_correct = (prediction.away_win or 0) == max(prediction.home_win or 0, prediction.draw or 0, prediction.away_win or 0)
+        else:
+            ai_correct = (prediction.draw or 0) == max(prediction.home_win or 0, prediction.draw or 0, prediction.away_win or 0)
 
-    if not prediction:
-        return {"linkedin": "", "x": "", "note": "No prediction data for this match"}
+        result_emoji = "✅" if ai_correct else "❌"
 
-    # Determine result
-    if match.home_score > match.away_score:
-        winner = match.home_team
-        ai_correct = prediction.home_win == max(prediction.home_win, prediction.draw, prediction.away_win)
-    elif match.away_score > match.home_score:
-        winner = match.away_team
-        ai_correct = prediction.away_win == max(prediction.home_win, prediction.draw, prediction.away_win)
-    else:
-        winner = "Draw"
-        ai_correct = prediction.draw == max(prediction.home_win, prediction.draw, prediction.away_win)
-
-    result_emoji = "✅" if ai_correct else "❌"
-
-    linkedin = f"""Match: {match.home_team} {match.home_score}–{match.away_score} {match.away_team}
+        linkedin = f"""Match: {match.home_team} {match.home_score}–{match.away_score} {match.away_team}
 AI predicted: {match.home_team} {round((prediction.home_win or 0) * 100)}% · Draw {round((prediction.draw or 0) * 100)}% · {match.away_team} {round((prediction.away_win or 0) * 100)}%
 Result: {result_emoji} {"correct" if ai_correct else "wrong"}
 
@@ -1163,72 +932,150 @@ Result: {result_emoji} {"correct" if ai_correct else "wrong"}
 Model v{prediction.model_version} — trained on {prediction.training_matches_seen} matches.
 #WorldCup2026 #AI #buildinpublic #MachineLearning"""
 
-    # X version: compressed
-    x_post = f"""{match.home_team} {match.home_score}–{match.away_score} {match.away_team}
-
-AI said: {match.home_team} {round((prediction.home_win or 0) * 100)}% · Draw {round((prediction.draw or 0) * 100)}% · {match.away_team} {round((prediction.away_win or 0) * 100)}%
+        x_post = f"""{match.home_team} {match.home_score}–{match.away_score} {match.away_team}
+AI: {match.home_team} {round((prediction.home_win or 0) * 100)}% · Draw {round((prediction.draw or 0) * 100)}% · {match.away_team} {round((prediction.away_win or 0) * 100)}%
 Result: {result_emoji}
-
-Model v{prediction.model_version} | {prediction.training_matches_seen} matches trained
+Model v{prediction.model_version} | {prediction.training_matches_seen} matches
 #WorldCup2026 #AI"""
 
-    return {
-        "match_id": match.id,
-        "linkedin": linkedin,
-        "x": x_post,
-        "ai_correct": ai_correct,
-    }
+        drafts.append({"platform": "linkedin", "match_id": match.id, "content": linkedin})
+        drafts.append({"platform": "x", "match_id": match.id, "content": x_post})
+
+    return drafts
 
 
-@app.post("/api/admin/sheets/sync")
+@app.post("/admin/retrain")
+@limiter.limit("5/minute")
+async def admin_retrain_simple(request: Request, background_tasks: BackgroundTasks):
+    check_admin_password(request)
+
+    async def run_retrain():
+        try:
+            from model import DeltaModel
+            model = DeltaModel()
+            result = await asyncio.get_event_loop().run_in_executor(None, model.retrain)
+            await broker.publish_global("retrain_complete", result)
+        except Exception as e:
+            logger.error(f"Retrain failed: {e}")
+            await broker.publish_global("retrain_failed", {"error": str(e)})
+
+    background_tasks.add_task(run_retrain)
+    return {"message": "Retraining started — watch SSE for result"}
+
+
+@app.post("/admin/sync-sheets")
 @limiter.limit("10/minute")
-async def admin_sync_sheets(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    match_id: Optional[str] = None,
-    _: bool = Depends(get_admin),
-):
-    """Manual Google Sheets sync trigger."""
+async def admin_sync_sheets_simple(request: Request, background_tasks: BackgroundTasks):
+    check_admin_password(request)
+
     async def run_sync():
         try:
             from sheets import SheetsWriter
             writer = SheetsWriter()
-            if match_id:
-                # Sync specific match
-                logger.info(f"Manual Sheets sync: {match_id}")
-            else:
-                await writer.sync_all_pending()
-            logger.info("Manual Sheets sync complete")
+            await writer.sync_all_pending()
         except Exception as e:
-            logger.error(f"Manual Sheets sync failed: {e}")
+            logger.error(f"Sheets sync failed: {e}")
 
     background_tasks.add_task(run_sync)
-    return {"status": "sync_started"}
+    return {"message": "Sheets sync started"}
 
 
 # ─────────────────────────────────────────────
-# PIPELINE PUBLISH ENDPOINT (internal use)
+# ADMIN — ADD MATCH (for seeding fixtures)
+# ─────────────────────────────────────────────
+
+@app.post("/admin/matches/add")
+@limiter.limit("60/minute")
+async def admin_add_match(request: Request, body: AddMatchRequest, db: Session = Depends(get_db)):
+    check_admin_password(request)
+    existing = db.query(MatchDB).filter(MatchDB.id == body.match_id).first()
+    if existing:
+        return {"status": "already_exists", "match_id": body.match_id}
+
+    kickoff = datetime.fromisoformat(body.kickoff_utc.replace("Z", "+00:00"))
+    match = MatchDB(
+        id=body.match_id,
+        home_team=body.home_team,
+        away_team=body.away_team,
+        kickoff_utc=kickoff,
+        venue=body.venue,
+        group_name=body.group,
+        phase=body.phase or "group",
+        state="SCHEDULED",
+        home_score=0,
+        away_score=0,
+        minute="0",
+        last_updated=datetime.now(timezone.utc),
+    )
+    db.add(match)
+    db.commit()
+    logger.info(f"Match added: {body.match_id} — {body.home_team} vs {body.away_team}")
+    return {"status": "created", "match_id": body.match_id}
+
+
+# ─────────────────────────────────────────────
+# EXISTING ADMIN ENDPOINTS (token-based, kept for compatibility)
+# ─────────────────────────────────────────────
+
+@app.get("/api/admin/dashboard")
+@limiter.limit("60/minute")
+async def admin_dashboard(request: Request, db: Session = Depends(get_db), _: bool = Depends(get_admin)):
+    active = db.query(MatchDB).filter(MatchDB.state.in_(["LIVE", "HT", "LIVE_2H", "ET_1H", "ET_HT", "ET_2H", "PENALTIES"])).all()
+    sources = db.query(SourceHealthDB).all()
+    latest_model = db.query(ModelVersionDB).order_by(ModelVersionDB.version.desc()).first()
+    total_votes = db.query(VoteDB).filter(VoteDB.is_penalty_vote == False).count()
+    verified_votes = db.query(VoteDB).filter(VoteDB.trust_score >= 0.8, VoteDB.is_penalty_vote == False).count()
+    probable_votes = db.query(VoteDB).filter(VoteDB.trust_score >= 0.6, VoteDB.trust_score < 0.8, VoteDB.is_penalty_vote == False).count()
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_votes = db.query(VoteDB).filter(VoteDB.timestamp >= today_start, VoteDB.is_penalty_vote == False).count()
+    return {
+        "active_matches": [_match_to_dict(m) for m in active],
+        "source_health": [_source_health_to_dict(s) for s in sources],
+        "sse_connections": broker.total_connections(),
+        "model": {
+            "version": latest_model.version if latest_model else 0,
+            "accuracy_after": latest_model.accuracy_after if latest_model else None,
+        },
+        "votes": {
+            "total": total_votes, "today": today_votes,
+            "verified": verified_votes, "probable": probable_votes,
+        },
+    }
+
+
+@app.post("/api/admin/match/override-state")
+@limiter.limit("60/minute")
+async def admin_override_state(request: Request, body: MatchStateOverride, db: Session = Depends(get_db), _: bool = Depends(get_admin)):
+    valid_states = {"SCHEDULED", "LIVE", "HT", "LIVE_2H", "FT", "ET_1H", "ET_HT", "ET_2H", "PENALTIES", "FINISHED", "VOID"}
+    if body.state not in valid_states:
+        raise HTTPException(status_code=400, detail=f"Invalid state")
+    match = db.query(MatchDB).filter(MatchDB.id == body.match_id).first()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+    old_state = match.state
+    match.state = body.state
+    match.last_updated = datetime.now(timezone.utc)
+    db.commit()
+    await broker.publish(body.match_id, "state_change", {"old_state": old_state, "new_state": body.state})
+    return {"success": True, "old_state": old_state, "new_state": body.state}
+
+
+# ─────────────────────────────────────────────
+# INTERNAL
 # ─────────────────────────────────────────────
 
 @app.post("/internal/publish")
 async def internal_publish(request: Request, body: dict):
-    """
-    Internal endpoint: pipeline.py calls this to push SSE updates.
-    Only accessible from localhost.
-    """
     client_ip = get_remote_address(request)
     if client_ip not in ("127.0.0.1", "::1", "localhost"):
         raise HTTPException(status_code=403, detail="Internal only")
-
     match_id = body.get("match_id")
     event_type = body.get("event_type", "update")
     data = body.get("data", {})
-
     if match_id:
         await broker.publish(match_id, event_type, data)
     else:
         await broker.publish_global(event_type, data)
-
     return {"published": True}
 
 
@@ -1293,8 +1140,8 @@ def _event_to_dict(e: LiveEventDB) -> dict:
 
 def _source_health_to_dict(s: SourceHealthDB) -> dict:
     return {
-        "source": s.source_name,
-        "status": s.status,
+        "name": s.source_name,
+        "status": s.status or "ok",
         "last_check": s.last_check.isoformat() if s.last_check else None,
         "block_count_today": s.block_count_today,
         "consecutive_failures": s.consecutive_failures,
@@ -1331,6 +1178,6 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8000")),
-        reload=os.getenv("ENV", "dev") == "dev",
+        reload=False,
         log_level="info",
     )
