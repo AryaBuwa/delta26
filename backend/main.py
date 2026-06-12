@@ -78,6 +78,7 @@ engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
     pool_pre_ping=True,
+    pool_recycle=300,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -88,7 +89,7 @@ class Base(DeclarativeBase):
 
 class MatchDB(Base):
     __tablename__ = "matches"
-    id = Column(String, primary_key=True)  # WC2026_M001
+    id = Column(String, primary_key=True)
     home_team = Column(String, nullable=False)
     away_team = Column(String, nullable=False)
     kickoff_utc = Column(DateTime(timezone=True), nullable=False)
@@ -137,9 +138,9 @@ class VoteDB(Base):
     match_id = Column(String, nullable=False, index=True)
     fingerprint_hash = Column(String, nullable=False)
     session_id = Column(String)
-    pick = Column(String, nullable=False)  # home / draw / away
+    pick = Column(String, nullable=False)
     first_scorer = Column(String)
-    confidence_level = Column(Integer)  # 1-5
+    confidence_level = Column(Integer)
     trust_score = Column(Float)
     recaptcha_score = Column(Float)
     timestamp = Column(DateTime(timezone=True))
@@ -171,7 +172,7 @@ class SourceHealthDB(Base):
     __tablename__ = "source_health"
     id = Column(Integer, primary_key=True, autoincrement=True)
     source_name = Column(String, nullable=False)
-    status = Column(String)  # ok / blocked / timeout / error
+    status = Column(String)
     last_check = Column(DateTime(timezone=True))
     block_count_today = Column(Integer, default=0)
     restore_at = Column(DateTime(timezone=True))
@@ -182,7 +183,7 @@ class LiveEventDB(Base):
     __tablename__ = "live_events"
     id = Column(Integer, primary_key=True, autoincrement=True)
     match_id = Column(String, nullable=False, index=True)
-    event_type = Column(String)  # goal / card / sub / var
+    event_type = Column(String)
     minute = Column(String)
     player = Column(String)
     team = Column(String)
@@ -191,7 +192,14 @@ class LiveEventDB(Base):
     timestamp = Column(DateTime(timezone=True))
 
 
-Base.metadata.create_all(bind=engine)
+def init_db():
+    """Call this once at startup — not at import time."""
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created/verified")
+    except Exception as e:
+        logger.error(f"Database init failed: {e}")
+        logger.warning("App starting without database — some features unavailable")
 
 
 def get_db():
@@ -200,8 +208,7 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
+        
 # ─────────────────────────────────────────────
 # SSE BROKER
 # ─────────────────────────────────────────────
@@ -448,6 +455,9 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
     logger.info("🚀 Project Delta starting up")
+
+    # Init database — must be first
+    init_db()
 
     # Import pipeline here to avoid circular imports at module load time
     try:
