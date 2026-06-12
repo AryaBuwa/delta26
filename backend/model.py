@@ -27,6 +27,15 @@ from sklearn.metrics import accuracy_score, log_loss
 from sklearn.preprocessing import LabelEncoder
 from loguru import logger
 
+# MLflow: optional — only used during retrain, not at startup
+# Install locally via requirements-dev.txt, not deployed to Render
+MLFLOW_AVAILABLE = False
+try:
+    import mlflow
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    logger.warning("MLflow not installed — experiment tracking disabled")
+
 # ─────────────────────────────────────────────
 # HARD RULE: MODEL SCOPE GUARD
 # This model ONLY outputs football match predictions.
