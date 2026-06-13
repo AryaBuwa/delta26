@@ -14,171 +14,256 @@ from typing import Optional
 from loguru import logger
 
 # ─────────────────────────────────────────────
-# 18 sources split into 6 groups of 3
+# 18 confirmed sources in 6 groups of 3
 # ─────────────────────────────────────────────
 
 SOURCE_GROUPS: dict[str, list[str]] = {
-    "G1": ["fifa",      "bbc",      "espn"],
-    "G2": ["sofascore", "flash",    "sky"],
-    "G3": ["guardian",  "90min",    "marca"],
-    "G4": ["football_critic", "one_football", "goal"],
-    "G5": ["livescore", "fotmob",   "365scores"],
-    "G6": ["transfermarkt", "whoscored", "soccerway"],
+    "G1": ["fifa",      "bbc",       "espn"],
+    "G2": ["sofascore", "flash",     "fotmob"],
+    "G3": ["reuters",   "ap_news",   "cbs"],
+    "G4": ["guardian",  "sky",       "goal"],
+    "G5": ["whoscored", "livescore", "as_english"],
+    "G6": ["sportstar", "ie_sports", "ndtv"],
 }
 
 ALL_SOURCES: list[str] = [s for g in SOURCE_GROUPS.values() for s in g]
 
-# Source display names (for UI + logs)
 SOURCE_NAMES: dict[str, str] = {
-    "fifa":             "FIFA.com",
-    "bbc":              "BBC Sport",
-    "espn":             "ESPN FC",
-    "sofascore":        "Sofascore",
-    "flash":            "FlashScore",
-    "sky":              "Sky Sports",
-    "guardian":         "The Guardian",
-    "90min":            "90min.com",
-    "marca":            "Marca",
-    "football_critic":  "FootballCritic",
-    "one_football":     "OneFootball",
-    "goal":             "Goal.com",
-    "livescore":        "LiveScore",
-    "fotmob":           "FotMob",
-    "365scores":        "365Scores",
-    "transfermarkt":    "Transfermarkt",
-    "whoscored":        "WhoScored",
-    "soccerway":        "Soccerway",
+    "fifa":       "FIFA.com",
+    "bbc":        "BBC Sport",
+    "espn":       "ESPN FC",
+    "sofascore":  "Sofascore",
+    "flash":      "FlashScore",
+    "fotmob":     "FotMob",
+    "reuters":    "Reuters Sports",
+    "ap_news":    "AP News Sports",
+    "cbs":        "CBS Sports",
+    "guardian":   "The Guardian",
+    "sky":        "Sky Sports",
+    "goal":       "Goal.com",
+    "whoscored":  "WhoScored",
+    "livescore":  "LiveScore",
+    "as_english": "AS English",
+    "sportstar":  "Sportstar",
+    "ie_sports":  "Indian Express Sports",
+    "ndtv":       "NDTV Sports",
 }
 
-# URL templates used when match-specific IDs are not yet mapped
-# {match_query} is replaced with "TeamA vs TeamB" for Tavily fallback
 SOURCE_BASE_URLS: dict[str, str] = {
-    "fifa":             "https://www.fifa.com/fifaplus/en/match-centre",
-    "bbc":              "https://www.bbc.com/sport/football",
-    "espn":             "https://www.espn.com/soccer/match",
-    "sofascore":        "https://www.sofascore.com",
-    "flash":            "https://www.flashscore.com",
-    "sky":              "https://www.skysports.com/football",
-    "guardian":         "https://www.theguardian.com/football",
-    "90min":            "https://www.90min.com",
-    "marca":            "https://www.marca.com/en/football/world-cup",
-    "football_critic":  "https://www.footballcritic.com",
-    "one_football":     "https://onefootball.com",
-    "goal":             "https://www.goal.com",
-    "livescore":        "https://www.livescore.com",
-    "fotmob":           "https://www.fotmob.com",
-    "365scores":        "https://www.365scores.com",
-    "transfermarkt":    "https://www.transfermarkt.com",
-    "whoscored":        "https://www.whoscored.com",
-    "soccerway":        "https://int.soccerway.com",
+    "fifa":       "https://www.fifa.com/fifaplus/en/match-centre",
+    "bbc":        "https://www.bbc.com/sport/football",
+    "espn":       "https://www.espn.com/soccer/match",
+    "sofascore":  "https://www.sofascore.com",
+    "flash":      "https://www.flashscore.com",
+    "fotmob":     "https://www.fotmob.com",
+    "reuters":    "https://www.reuters.com/sports/soccer",
+    "ap_news":    "https://apnews.com/sports/soccer",
+    "cbs":        "https://www.cbssports.com/soccer",
+    "guardian":   "https://www.theguardian.com/football",
+    "sky":        "https://www.skysports.com/football",
+    "goal":       "https://www.goal.com",
+    "whoscored":  "https://www.whoscored.com",
+    "livescore":  "https://www.livescore.com",
+    "as_english": "https://en.as.com/soccer",
+    "sportstar":  "https://sportstar.thehindu.com/football",
+    "ie_sports":  "https://indianexpress.com/sports/football",
+    "ndtv":       "https://sports.ndtv.com/football",
 }
 
 # ─────────────────────────────────────────────
-# All 104 FIFA World Cup 2026 matches
-# Populated progressively as tournament starts
+# COMPLETED MATCH RESULTS (for model training)
 # ─────────────────────────────────────────────
 
-# Format: match_id → {source_key: direct_url}
-# Empty dict = use Tavily fallback for that match
-# Populated by paste_match_urls() as tournament progresses
-
-_match_urls: dict[str, dict[str, str]] = {}
-
-# Per-match group assignment (rotates daily, never repeats for same match)
-_match_group_assignments: dict[str, str] = {}
-
-# Track which group each match used previously to enforce no-repeat rule
-_match_group_history: dict[str, list[str]] = {}
+COMPLETED_RESULTS: dict[str, dict] = {
+    "WC2026_M001": {
+        "home_score": 2, "away_score": 0,
+        "winner": "home",
+        "scorers": ["Quiñones (9')", "Jiménez (67')"],
+        "red_cards": ["South Africa x3"],
+        "state": "FINISHED",
+    },
+    "WC2026_M002": {
+        "home_score": 2, "away_score": 1,
+        "winner": "home",
+        "scorers": ["Krejcí (og South Korea)", "Hwang In-Beom", "Oh Hyeon-Gyu (79')"],
+        "red_cards": [],
+        "state": "FINISHED",
+    },
+    "WC2026_M003": {
+        "home_score": 1, "away_score": 1,
+        "winner": "draw",
+        "scorers": [],
+        "red_cards": [],
+        "state": "FINISHED",
+    },
+    "WC2026_M004": {
+        "home_score": 4, "away_score": 1,
+        "winner": "home",
+        "scorers": [],
+        "red_cards": [],
+        "state": "FINISHED",
+    },
+}
 
 # ─────────────────────────────────────────────
-# WC 2026 fixture schedule (all 104 matches)
+# ALL 104 FIXTURES
 # ─────────────────────────────────────────────
 
 FIXTURES: list[dict] = [
-    # ── GROUP STAGE ──────────────────────────────────────────────────────
-    # Group A
-    {"match_id": "WC2026_M001", "home": "Mexico",       "away": "South Africa", "kickoff_utc": "2026-06-11T20:00:00Z", "venue": "SoFi Stadium, LA",         "phase": "group", "group": "A"},
-    {"match_id": "WC2026_M002", "home": "USA",           "away": "TBD_A2",      "kickoff_utc": "2026-06-12T17:00:00Z", "venue": "MetLife Stadium, NJ",       "phase": "group", "group": "A"},
-    {"match_id": "WC2026_M003", "home": "TBD_A3",       "away": "TBD_A4",      "kickoff_utc": "2026-06-12T20:00:00Z", "venue": "AT&T Stadium, Dallas",      "phase": "group", "group": "A"},
-    # Group B
-    {"match_id": "WC2026_M004", "home": "Spain",         "away": "TBD_B2",      "kickoff_utc": "2026-06-12T23:00:00Z", "venue": "Levi's Stadium, SF",        "phase": "group", "group": "B"},
-    {"match_id": "WC2026_M005", "home": "TBD_B3",       "away": "TBD_B4",      "kickoff_utc": "2026-06-13T17:00:00Z", "venue": "Mercedes-Benz, Atlanta",    "phase": "group", "group": "B"},
-    {"match_id": "WC2026_M006", "home": "France",        "away": "TBD_C2",      "kickoff_utc": "2026-06-13T20:00:00Z", "venue": "Hard Rock Stadium, Miami",  "phase": "group", "group": "C"},
-    # Continue for all 104 matches — IDs M001-M104
-    # Group stage: M001-M072 (48 teams × 3 group matches each / 2)
-    # Round of 32: M073-M088 (wait, WC2026 has R32 = 16 matches)
-    # Round of 16: M089-M096
-    # Quarter-finals: M097-M100 (but format: R32=16, R16=8, QF=4, SF=2, 3rd=1, F=1 = 32 KO + 72 group = 104)
-    # Actual: 48 teams, group stage = 6 matches per group × 12 groups = 72 matches
-    # R32 = 16 matches, R16 = 8, QF = 4, SF = 2, 3rd place = 1, Final = 1 = 32 KO = 104 total ✓
+    # ── GROUP A ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M001", "home": "Mexico",               "away": "South Africa",         "kickoff_utc": "2026-06-11T19:00:00Z", "venue": "Estadio Azteca, Mexico City",          "phase": "group", "group": "A", "home_score": 2, "away_score": 0, "state": "FINISHED"},
+    {"match_id": "WC2026_M002", "home": "South Korea",          "away": "Czechia",               "kickoff_utc": "2026-06-12T03:00:00Z", "venue": "Estadio Akron, Guadalajara",           "phase": "group", "group": "A", "home_score": 2, "away_score": 1, "state": "FINISHED"},
+    {"match_id": "WC2026_M025", "home": "Czechia",              "away": "South Africa",          "kickoff_utc": "2026-06-18T16:00:00Z", "venue": "Mercedes-Benz Stadium, Atlanta",       "phase": "group", "group": "A", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M028", "home": "Mexico",               "away": "South Korea",           "kickoff_utc": "2026-06-19T01:00:00Z", "venue": "Estadio Akron, Guadalajara",           "phase": "group", "group": "A", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M053", "home": "Czechia",              "away": "Mexico",                "kickoff_utc": "2026-06-25T01:00:00Z", "venue": "Estadio Azteca, Mexico City",          "phase": "group", "group": "A", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M054", "home": "South Africa",         "away": "South Korea",           "kickoff_utc": "2026-06-25T01:00:00Z", "venue": "Estadio Akron, Guadalajara",           "phase": "group", "group": "A", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
 
-    # ── KNOCKOUT PLACEHOLDERS (filled as tournament progresses) ──────────
-    {"match_id": "WC2026_M073", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-02T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M074", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-03T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M075", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-03T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M076", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-04T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M077", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-04T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M078", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-05T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M079", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-05T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M080", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-06T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M081", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-06T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M082", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-07T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M083", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-07T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M084", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-08T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M085", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-08T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M086", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-09T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M087", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-09T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    {"match_id": "WC2026_M088", "home": "TBD",          "away": "TBD",          "kickoff_utc": "2026-07-10T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None},
-    # R16
-    {"match_id": "WC2026_M089", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-11T20:00:00Z", "venue": "TBD", "phase": "r16", "group": None},
-    {"match_id": "WC2026_M090", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-12T17:00:00Z", "venue": "TBD", "phase": "r16", "group": None},
-    {"match_id": "WC2026_M091", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-12T20:00:00Z", "venue": "TBD", "phase": "r16", "group": None},
-    {"match_id": "WC2026_M092", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-13T17:00:00Z", "venue": "TBD", "phase": "r16", "group": None},
-    {"match_id": "WC2026_M093", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-13T20:00:00Z", "venue": "TBD", "phase": "r16", "group": None},
-    {"match_id": "WC2026_M094", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-14T17:00:00Z", "venue": "TBD", "phase": "r16", "group": None},
-    {"match_id": "WC2026_M095", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-14T20:00:00Z", "venue": "TBD", "phase": "r16", "group": None},
-    {"match_id": "WC2026_M096", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-15T20:00:00Z", "venue": "TBD", "phase": "r16", "group": None},
-    # QF
-    {"match_id": "WC2026_M097", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-16T20:00:00Z", "venue": "TBD", "phase": "qf", "group": None},
-    {"match_id": "WC2026_M098", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-17T17:00:00Z", "venue": "TBD", "phase": "qf", "group": None},
-    {"match_id": "WC2026_M099", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-17T20:00:00Z", "venue": "TBD", "phase": "qf", "group": None},
-    {"match_id": "WC2026_M100", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-18T20:00:00Z", "venue": "TBD", "phase": "qf", "group": None},
-    # SF
-    {"match_id": "WC2026_M101", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-18T20:00:00Z", "venue": "TBD", "phase": "sf", "group": None},
-    {"match_id": "WC2026_M102", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-19T17:00:00Z", "venue": "TBD", "phase": "sf", "group": None},
-    # 3rd place
-    {"match_id": "WC2026_M103", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-19T17:00:00Z", "venue": "TBD", "phase": "3rd", "group": None},
-    # Final
-    {"match_id": "WC2026_M104", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-19T20:00:00Z", "venue": "MetLife Stadium, New Jersey", "phase": "final", "group": None},
+    # ── GROUP B ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M003", "home": "Canada",               "away": "Bosnia and Herzegovina","kickoff_utc": "2026-06-12T20:00:00Z", "venue": "BMO Field, Toronto",                  "phase": "group", "group": "B", "home_score": 1, "away_score": 1, "state": "FINISHED"},
+    {"match_id": "WC2026_M005", "home": "Qatar",                "away": "Switzerland",           "kickoff_utc": "2026-06-13T19:00:00Z", "venue": "Levi's Stadium, San Francisco",        "phase": "group", "group": "B", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M026", "home": "Switzerland",          "away": "Bosnia and Herzegovina","kickoff_utc": "2026-06-18T19:00:00Z", "venue": "Lincoln Financial Field, Philadelphia","phase": "group", "group": "B", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M027", "home": "Canada",               "away": "Qatar",                 "kickoff_utc": "2026-06-18T22:00:00Z", "venue": "BC Place, Vancouver",                 "phase": "group", "group": "B", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M049", "home": "Switzerland",          "away": "Canada",                "kickoff_utc": "2026-06-24T19:00:00Z", "venue": "BC Place, Vancouver",                 "phase": "group", "group": "B", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M050", "home": "Bosnia and Herzegovina","away": "Qatar",                "kickoff_utc": "2026-06-24T19:00:00Z", "venue": "Lincoln Financial Field, Philadelphia","phase": "group", "group": "B", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+
+    # ── GROUP C ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M006", "home": "Brazil",               "away": "Morocco",               "kickoff_utc": "2026-06-13T22:00:00Z", "venue": "MetLife Stadium, New Jersey",          "phase": "group", "group": "C", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M007", "home": "Haiti",                "away": "Scotland",              "kickoff_utc": "2026-06-14T01:00:00Z", "venue": "Gillette Stadium, Boston",             "phase": "group", "group": "C", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M029", "home": "Scotland",             "away": "Brazil",                "kickoff_utc": "2026-06-19T16:00:00Z", "venue": "Rose Bowl, Los Angeles",               "phase": "group", "group": "C", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M030", "home": "Morocco",              "away": "Haiti",                 "kickoff_utc": "2026-06-19T19:00:00Z", "venue": "Gillette Stadium, Boston",             "phase": "group", "group": "C", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M051", "home": "Scotland",             "away": "Brazil",                "kickoff_utc": "2026-06-24T22:00:00Z", "venue": "Rose Bowl, Los Angeles",               "phase": "group", "group": "C", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M052", "home": "Morocco",              "away": "Haiti",                 "kickoff_utc": "2026-06-24T22:00:00Z", "venue": "Gillette Stadium, Boston",             "phase": "group", "group": "C", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+
+    # ── GROUP D ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M004", "home": "USA",                  "away": "Paraguay",              "kickoff_utc": "2026-06-13T02:00:00Z", "venue": "SoFi Stadium, Los Angeles",            "phase": "group", "group": "D", "home_score": 4, "away_score": 1, "state": "FINISHED"},
+    {"match_id": "WC2026_M008", "home": "Australia",            "away": "Turkiye",               "kickoff_utc": "2026-06-14T04:00:00Z", "venue": "Hard Rock Stadium, Miami",             "phase": "group", "group": "D", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M031", "home": "Paraguay",             "away": "Australia",             "kickoff_utc": "2026-06-19T22:00:00Z", "venue": "Camping World Stadium, Orlando",       "phase": "group", "group": "D", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M032", "home": "USA",                  "away": "Turkiye",               "kickoff_utc": "2026-06-20T01:00:00Z", "venue": "Levi's Stadium, San Francisco",        "phase": "group", "group": "D", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M059", "home": "Turkiye",              "away": "USA",                   "kickoff_utc": "2026-06-26T02:00:00Z", "venue": "Levi's Stadium, San Francisco",        "phase": "group", "group": "D", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M060", "home": "Paraguay",             "away": "Australia",             "kickoff_utc": "2026-06-26T02:00:00Z", "venue": "Camping World Stadium, Orlando",       "phase": "group", "group": "D", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+
+    # ── GROUP E ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M010", "home": "Netherlands",          "away": "Japan",                 "kickoff_utc": "2026-06-14T20:00:00Z", "venue": "Levi's Stadium, San Francisco",        "phase": "group", "group": "E", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M012", "home": "Sweden",               "away": "Tunisia",               "kickoff_utc": "2026-06-15T02:00:00Z", "venue": "Gillette Stadium, Boston",             "phase": "group", "group": "E", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M035", "home": "Japan",                "away": "Sweden",                "kickoff_utc": "2026-06-20T22:00:00Z", "venue": "Hard Rock Stadium, Miami",             "phase": "group", "group": "E", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M036", "home": "Tunisia",              "away": "Netherlands",           "kickoff_utc": "2026-06-21T01:00:00Z", "venue": "MetLife Stadium, New Jersey",          "phase": "group", "group": "E", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M057", "home": "Japan",                "away": "Sweden",                "kickoff_utc": "2026-06-25T23:00:00Z", "venue": "Hard Rock Stadium, Miami",             "phase": "group", "group": "E", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M058", "home": "Tunisia",              "away": "Netherlands",           "kickoff_utc": "2026-06-25T23:00:00Z", "venue": "MetLife Stadium, New Jersey",          "phase": "group", "group": "E", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+
+    # ── GROUP F ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M009", "home": "Germany",              "away": "Curacao",               "kickoff_utc": "2026-06-14T17:00:00Z", "venue": "MetLife Stadium, New Jersey",          "phase": "group", "group": "F", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M011", "home": "Ivory Coast",          "away": "Ecuador",               "kickoff_utc": "2026-06-14T23:00:00Z", "venue": "Estadio Akron, Guadalajara",           "phase": "group", "group": "F", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M033", "home": "Ecuador",              "away": "Germany",               "kickoff_utc": "2026-06-20T16:00:00Z", "venue": "AT&T Stadium, Dallas",                "phase": "group", "group": "F", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M034", "home": "Curacao",              "away": "Ivory Coast",           "kickoff_utc": "2026-06-20T19:00:00Z", "venue": "Estadio Azteca, Mexico City",          "phase": "group", "group": "F", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M055", "home": "Ecuador",              "away": "Germany",               "kickoff_utc": "2026-06-25T20:00:00Z", "venue": "AT&T Stadium, Dallas",                "phase": "group", "group": "F", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M056", "home": "Curacao",              "away": "Ivory Coast",           "kickoff_utc": "2026-06-25T20:00:00Z", "venue": "Estadio Azteca, Mexico City",          "phase": "group", "group": "F", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+
+    # ── GROUP G ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M014", "home": "Belgium",              "away": "Egypt",                 "kickoff_utc": "2026-06-15T19:00:00Z", "venue": "Lincoln Financial Field, Philadelphia","phase": "group", "group": "G", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M016", "home": "Iran",                 "away": "New Zealand",           "kickoff_utc": "2026-06-16T01:00:00Z", "venue": "BC Place, Vancouver",                 "phase": "group", "group": "G", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M038", "home": "Belgium",              "away": "Iran",                  "kickoff_utc": "2026-06-21T19:00:00Z", "venue": "Levi's Stadium, San Francisco",        "phase": "group", "group": "G", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M040", "home": "New Zealand",          "away": "Egypt",                 "kickoff_utc": "2026-06-22T01:00:00Z", "venue": "Camping World Stadium, Orlando",       "phase": "group", "group": "G", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M068", "home": "Egypt",                "away": "Belgium",               "kickoff_utc": "2026-06-27T19:00:00Z", "venue": "Empower Field, Denver",                "phase": "group", "group": "G", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M069", "home": "New Zealand",          "away": "Sweden",                "kickoff_utc": "2026-06-27T22:00:00Z", "venue": "AT&T Stadium, Dallas",                "phase": "group", "group": "G", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+
+    # ── GROUP H ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M013", "home": "Spain",                "away": "Cape Verde",            "kickoff_utc": "2026-06-15T16:00:00Z", "venue": "SoFi Stadium, Los Angeles",            "phase": "group", "group": "H", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M015", "home": "Saudi Arabia",         "away": "Uruguay",               "kickoff_utc": "2026-06-15T22:00:00Z", "venue": "Camping World Stadium, Orlando",       "phase": "group", "group": "H", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M037", "home": "Spain",                "away": "Saudi Arabia",          "kickoff_utc": "2026-06-21T16:00:00Z", "venue": "Rose Bowl, Los Angeles",               "phase": "group", "group": "H", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M039", "home": "Uruguay",              "away": "Cape Verde",            "kickoff_utc": "2026-06-21T22:00:00Z", "venue": "Arrowhead Stadium, Kansas City",       "phase": "group", "group": "H", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M065", "home": "Spain",                "away": "Belgium",               "kickoff_utc": "2026-06-27T01:00:00Z", "venue": "Rose Bowl, Los Angeles",               "phase": "group", "group": "H", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M066", "home": "Cape Verde",           "away": "Saudi Arabia",          "kickoff_utc": "2026-06-27T01:00:00Z", "venue": "Camping World Stadium, Orlando",       "phase": "group", "group": "H", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+
+    # ── GROUP I ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M017", "home": "France",               "away": "Senegal",               "kickoff_utc": "2026-06-16T19:00:00Z", "venue": "Mercedes-Benz Stadium, Atlanta",       "phase": "group", "group": "I", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M018", "home": "Iraq",                 "away": "Norway",                "kickoff_utc": "2026-06-16T22:00:00Z", "venue": "Empower Field, Denver",                "phase": "group", "group": "I", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M042", "home": "France",               "away": "Iraq",                  "kickoff_utc": "2026-06-22T21:00:00Z", "venue": "Gillette Stadium, Boston",             "phase": "group", "group": "I", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M043", "home": "Norway",               "away": "Senegal",               "kickoff_utc": "2026-06-23T00:00:00Z", "venue": "BC Place, Vancouver",                 "phase": "group", "group": "I", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M061", "home": "Norway",               "away": "France",                "kickoff_utc": "2026-06-26T19:00:00Z", "venue": "BC Place, Vancouver",                 "phase": "group", "group": "I", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M062", "home": "Senegal",              "away": "Iraq",                  "kickoff_utc": "2026-06-26T19:00:00Z", "venue": "Lincoln Financial Field, Philadelphia","phase": "group", "group": "I", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+
+    # ── GROUP J ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M019", "home": "Argentina",            "away": "Algeria",               "kickoff_utc": "2026-06-17T01:00:00Z", "venue": "MetLife Stadium, New Jersey",          "phase": "group", "group": "J", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M020", "home": "Austria",              "away": "Jordan",                "kickoff_utc": "2026-06-17T04:00:00Z", "venue": "Hard Rock Stadium, Miami",             "phase": "group", "group": "J", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M041", "home": "Argentina",            "away": "Austria",               "kickoff_utc": "2026-06-22T17:00:00Z", "venue": "Mercedes-Benz Stadium, Atlanta",       "phase": "group", "group": "J", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M044", "home": "Jordan",               "away": "Algeria",               "kickoff_utc": "2026-06-23T03:00:00Z", "venue": "Lincoln Financial Field, Philadelphia","phase": "group", "group": "J", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M063", "home": "Algeria",              "away": "Argentina",             "kickoff_utc": "2026-06-26T22:00:00Z", "venue": "Mercedes-Benz Stadium, Atlanta",       "phase": "group", "group": "J", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M064", "home": "Austria",              "away": "Jordan",                "kickoff_utc": "2026-06-26T22:00:00Z", "venue": "Gillette Stadium, Boston",             "phase": "group", "group": "J", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+
+    # ── GROUP K ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M021", "home": "Portugal",             "away": "DR Congo",              "kickoff_utc": "2026-06-17T17:00:00Z", "venue": "Levi's Stadium, San Francisco",        "phase": "group", "group": "K", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M024", "home": "Uzbekistan",           "away": "Colombia",              "kickoff_utc": "2026-06-18T02:00:00Z", "venue": "Arrowhead Stadium, Kansas City",       "phase": "group", "group": "K", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M045", "home": "Portugal",             "away": "Uzbekistan",            "kickoff_utc": "2026-06-23T17:00:00Z", "venue": "AT&T Stadium, Dallas",                "phase": "group", "group": "K", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M048", "home": "Colombia",             "away": "DR Congo",              "kickoff_utc": "2026-06-24T02:00:00Z", "venue": "Rose Bowl, Los Angeles",               "phase": "group", "group": "K", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M071", "home": "DR Congo",             "away": "Uzbekistan",            "kickoff_utc": "2026-06-28T01:00:00Z", "venue": "Mercedes-Benz Stadium, Atlanta",       "phase": "group", "group": "K", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M072", "home": "Colombia",             "away": "Portugal",              "kickoff_utc": "2026-06-28T01:00:00Z", "venue": "Rose Bowl, Los Angeles",               "phase": "group", "group": "K", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+
+    # ── GROUP L ───────────────────────────────────────────────────────────
+    {"match_id": "WC2026_M022", "home": "England",              "away": "Croatia",               "kickoff_utc": "2026-06-17T20:00:00Z", "venue": "AT&T Stadium, Dallas",                "phase": "group", "group": "L", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M023", "home": "Ghana",                "away": "Panama",                "kickoff_utc": "2026-06-17T23:00:00Z", "venue": "Estadio Azteca, Mexico City",          "phase": "group", "group": "L", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M046", "home": "England",              "away": "Ghana",                 "kickoff_utc": "2026-06-23T20:00:00Z", "venue": "Empower Field, Denver",                "phase": "group", "group": "L", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M047", "home": "Panama",               "away": "Croatia",               "kickoff_utc": "2026-06-23T23:00:00Z", "venue": "Hard Rock Stadium, Miami",             "phase": "group", "group": "L", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M073", "home": "Croatia",              "away": "England",               "kickoff_utc": "2026-06-28T19:00:00Z", "venue": "AT&T Stadium, Dallas",                "phase": "group", "group": "L", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M074", "home": "Panama",               "away": "Ghana",                 "kickoff_utc": "2026-06-28T19:00:00Z", "venue": "Arrowhead Stadium, Kansas City",       "phase": "group", "group": "L", "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+
+    # ── KNOCKOUT PLACEHOLDERS ─────────────────────────────────────────────
+    {"match_id": "WC2026_M075", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-02T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M076", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-03T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M077", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-03T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M078", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-04T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M079", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-04T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M080", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-05T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M081", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-05T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M082", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-06T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M083", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-06T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M084", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-07T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M085", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-07T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M086", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-08T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M087", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-08T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M088", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-09T17:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M089", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-09T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M090", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-10T20:00:00Z", "venue": "TBD", "phase": "r32",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M091", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-11T20:00:00Z", "venue": "TBD", "phase": "r16",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M092", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-12T17:00:00Z", "venue": "TBD", "phase": "r16",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M093", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-12T20:00:00Z", "venue": "TBD", "phase": "r16",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M094", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-13T17:00:00Z", "venue": "TBD", "phase": "r16",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M095", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-13T20:00:00Z", "venue": "TBD", "phase": "r16",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M096", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-14T17:00:00Z", "venue": "TBD", "phase": "r16",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M097", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-14T20:00:00Z", "venue": "TBD", "phase": "r16",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M098", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-15T20:00:00Z", "venue": "TBD", "phase": "r16",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M099", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-16T20:00:00Z", "venue": "TBD", "phase": "qf",    "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M100", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-17T17:00:00Z", "venue": "TBD", "phase": "qf",    "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M101", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-17T20:00:00Z", "venue": "TBD", "phase": "qf",    "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M102", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-18T20:00:00Z", "venue": "TBD", "phase": "qf",    "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M103", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-18T20:00:00Z", "venue": "TBD", "phase": "sf",    "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M104", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-19T17:00:00Z", "venue": "TBD", "phase": "sf",    "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M105", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-19T17:00:00Z", "venue": "TBD", "phase": "3rd",   "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
+    {"match_id": "WC2026_M106", "home": "TBD", "away": "TBD", "kickoff_utc": "2026-07-19T20:00:00Z", "venue": "MetLife Stadium, New Jersey", "phase": "final", "group": None, "home_score": 0, "away_score": 0, "state": "SCHEDULED"},
 ]
 
-# Fast lookup by match_id
 FIXTURE_BY_ID: dict[str, dict] = {f["match_id"]: f for f in FIXTURES}
 
 # ─────────────────────────────────────────────
-# Group rotation logic
+# URL MAPPINGS (populated as tournament progresses)
+# ─────────────────────────────────────────────
+
+_match_urls: dict[str, dict[str, str]] = {}
+_match_group_assignments: dict[str, str] = {}
+_match_group_history: dict[str, list[str]] = {}
+
+# ─────────────────────────────────────────────
+# GROUP ROTATION
 # ─────────────────────────────────────────────
 
 def assign_groups_for_day(match_ids: list[str]) -> dict[str, str]:
-    """
-    Assign source groups to today's matches.
-    Rules:
-    1. Shuffle available groups randomly
-    2. Never assign same group as last time for a given match
-    3. Up to 6 matches → 6 groups, one each
-    4. Save assignments to disk for pipeline.py to read
-    Returns: {match_id: group_key}
-    """
     group_keys = list(SOURCE_GROUPS.keys())
     random.shuffle(group_keys)
-
     assignments: dict[str, str] = {}
     used_groups: set[str] = set()
 
-    for match_id in match_ids[:6]:  # max 6 simultaneous
+    for match_id in match_ids[:6]:
         history = _match_group_history.get(match_id, [])
         last_used = history[-1] if history else None
-
         for g in group_keys:
             if g not in used_groups and g != last_used:
                 assignments[match_id] = g
@@ -186,7 +271,6 @@ def assign_groups_for_day(match_ids: list[str]) -> dict[str, str]:
                 _match_group_history.setdefault(match_id, []).append(g)
                 break
         else:
-            # Fallback: any unused group even if repeated
             for g in group_keys:
                 if g not in used_groups:
                     assignments[match_id] = g
@@ -201,14 +285,9 @@ def assign_groups_for_day(match_ids: list[str]) -> dict[str, str]:
 
 
 def swap_group(match_id: str) -> str:
-    """
-    Swap entire group for a match (all sources blocked).
-    Picks a different group not currently assigned to any active match.
-    """
     current = _match_group_assignments.get(match_id)
     active_groups = set(_match_group_assignments.values())
     history = _match_group_history.get(match_id, [])
-
     for g in SOURCE_GROUPS.keys():
         if g != current and g not in active_groups and g not in history[-2:]:
             _match_group_assignments[match_id] = g
@@ -216,91 +295,61 @@ def swap_group(match_id: str) -> str:
             _persist_state()
             logger.warning(f"Group swapped for {match_id}: {current} → {g}")
             return g
-
-    # Last resort: any different group
     for g in SOURCE_GROUPS.keys():
         if g != current:
             _match_group_assignments[match_id] = g
             _persist_state()
-            logger.warning(f"Group force-swapped for {match_id}: {current} → {g}")
             return g
-
-    return current  # Should never reach here
+    return current
 
 
 def get_sources_for_match(match_id: str) -> list[str]:
-    """Return the 3 source keys assigned to this match today."""
     group_key = _match_group_assignments.get(match_id)
     if not group_key:
-        logger.warning(f"No group assigned for {match_id}, using G1 default")
         return SOURCE_GROUPS["G1"]
     return SOURCE_GROUPS[group_key]
 
 
 def get_url(match_id: str, source: str) -> Optional[str]:
-    """
-    Get the direct URL for a match + source combination.
-    Returns None if not yet mapped (triggers Tavily fallback in fetcher.py).
-    """
     return _match_urls.get(match_id, {}).get(source)
 
 
 def paste_match_urls(match_id: str, urls: dict[str, str]) -> None:
-    """
-    Populate URL mappings for a match.
-    Called manually from admin panel or script as tournament progresses.
-    urls: {source_key: direct_url}
-    Example: paste_match_urls("WC2026_M001", {"bbc": "https://bbc.com/sport/.../..."})
-    """
     if match_id not in FIXTURE_BY_ID:
         logger.error(f"Unknown match_id: {match_id}")
         return
     _match_urls.setdefault(match_id, {}).update(urls)
     _persist_state()
-    mapped = list(urls.keys())
-    logger.info(f"URLs mapped for {match_id}: {mapped}")
+    logger.info(f"URLs mapped for {match_id}: {list(urls.keys())}")
 
 
 def get_match_info(match_id: str) -> Optional[dict]:
-    """Return fixture dict for a match."""
     return FIXTURE_BY_ID.get(match_id)
 
 
 def get_todays_matches() -> list[dict]:
-    """Return all fixtures scheduled for today (UTC date)."""
     today = datetime.now(timezone.utc).date()
-    result = []
-    for f in FIXTURES:
-        try:
-            ko = datetime.fromisoformat(f["kickoff_utc"].replace("Z", "+00:00"))
-            if ko.date() == today:
-                result.append(f)
-        except Exception:
-            pass
-    return sorted(result, key=lambda x: x["kickoff_utc"])
+    return sorted(
+        [f for f in FIXTURES if _ko_date(f) == today],
+        key=lambda x: x["kickoff_utc"]
+    )
 
 
 def get_upcoming_matches(hours: int = 24) -> list[dict]:
-    """Return fixtures kicking off in the next N hours."""
-    now = datetime.now(timezone.utc)
     from datetime import timedelta
+    now = datetime.now(timezone.utc)
     cutoff = now + timedelta(hours=hours)
-    result = []
-    for f in FIXTURES:
-        try:
-            ko = datetime.fromisoformat(f["kickoff_utc"].replace("Z", "+00:00"))
-            if now <= ko <= cutoff:
-                result.append(f)
-        except Exception:
-            pass
-    return sorted(result, key=lambda x: x["kickoff_utc"])
+    return sorted(
+        [f for f in FIXTURES if now <= _ko_dt(f) <= cutoff],
+        key=lambda x: x["kickoff_utc"]
+    )
+
+
+def get_finished_matches() -> list[dict]:
+    return [f for f in FIXTURES if f.get("state") == "FINISHED"]
 
 
 def update_fixture_teams(match_id: str, home: str, away: str) -> None:
-    """
-    Update TBD placeholders once knockout teams are confirmed.
-    Called by pipeline.py when teams qualify.
-    """
     if match_id in FIXTURE_BY_ID:
         FIXTURE_BY_ID[match_id]["home"] = home
         FIXTURE_BY_ID[match_id]["away"] = away
@@ -308,23 +357,45 @@ def update_fixture_teams(match_id: str, home: str, away: str) -> None:
         logger.info(f"Fixture updated: {match_id} — {home} vs {away}")
 
 
+def update_fixture_result(match_id: str, home_score: int, away_score: int, state: str = "FINISHED") -> None:
+    if match_id in FIXTURE_BY_ID:
+        FIXTURE_BY_ID[match_id]["home_score"] = home_score
+        FIXTURE_BY_ID[match_id]["away_score"] = away_score
+        FIXTURE_BY_ID[match_id]["state"] = state
+        _persist_state()
+        logger.info(f"Result updated: {match_id} — {home_score}-{away_score} ({state})")
+
+
 # ─────────────────────────────────────────────
-# State persistence (survives Render restarts)
+# HELPERS
+# ─────────────────────────────────────────────
+
+def _ko_dt(fixture: dict) -> datetime:
+    try:
+        return datetime.fromisoformat(fixture["kickoff_utc"].replace("Z", "+00:00"))
+    except Exception:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _ko_date(fixture: dict):
+    return _ko_dt(fixture).date()
+
+
+# ─────────────────────────────────────────────
+# STATE PERSISTENCE
 # ─────────────────────────────────────────────
 
 _STATE_FILE = Path("fixtures_state.json")
 
 
 def _persist_state() -> None:
-    """Save mutable state to disk."""
     state = {
         "match_urls": _match_urls,
         "group_assignments": _match_group_assignments,
         "group_history": _match_group_history,
         "fixture_overrides": {
-            mid: {"home": f["home"], "away": f["away"]}
+            mid: {"home": f["home"], "away": f["away"], "home_score": f.get("home_score", 0), "away_score": f.get("away_score", 0), "state": f.get("state", "SCHEDULED")}
             for mid, f in FIXTURE_BY_ID.items()
-            if "TBD" not in f.get("home", "TBD")
         },
     }
     try:
@@ -334,41 +405,28 @@ def _persist_state() -> None:
 
 
 def load_state() -> None:
-    """Load persisted state on startup. Call once from main.py."""
     global _match_urls, _match_group_assignments
-
     if not _STATE_FILE.exists():
-        logger.info("No fixtures state file found — starting fresh.")
+        logger.info("No fixtures state file — starting fresh.")
         return
-
     try:
         state = json.loads(_STATE_FILE.read_text())
         _match_urls.update(state.get("match_urls", {}))
         _match_group_assignments.update(state.get("group_assignments", {}))
         _match_group_history.update(state.get("group_history", {}))
-
-        # Restore knockout team overrides
-        for mid, teams in state.get("fixture_overrides", {}).items():
+        for mid, data in state.get("fixture_overrides", {}).items():
             if mid in FIXTURE_BY_ID:
-                FIXTURE_BY_ID[mid].update(teams)
-
-        logger.info(
-            f"Fixtures state loaded: {len(_match_urls)} matches mapped, "
-            f"{len(_match_group_assignments)} group assignments."
-        )
+                FIXTURE_BY_ID[mid].update(data)
+        logger.info(f"Fixtures state loaded: {len(_match_urls)} matches mapped")
     except Exception as e:
         logger.error(f"Failed to load fixtures state: {e}")
 
 
 # ─────────────────────────────────────────────
-# Tavily fallback query builder
+# TAVILY QUERY BUILDER
 # ─────────────────────────────────────────────
 
 def build_tavily_query(match_id: str, source: str) -> str:
-    """
-    Build Tavily search query for an unmapped source.
-    Used by fetcher.py when get_url() returns None.
-    """
     fixture = FIXTURE_BY_ID.get(match_id, {})
     home = fixture.get("home", "Team A")
     away = fixture.get("away", "Team B")
@@ -377,58 +435,40 @@ def build_tavily_query(match_id: str, source: str) -> str:
 
 
 # ─────────────────────────────────────────────
-# Deployment helper (used by admin + alerts.py)
+# DEPLOY SAFETY
 # ─────────────────────────────────────────────
 
 def safe_to_deploy() -> tuple[bool, str]:
-    """
-    Check if it's safe to deploy right now.
-    Returns (is_safe, reason_string).
-    """
     from datetime import timedelta
     now = datetime.now(timezone.utc)
-
-    # Check for matches active or starting soon (within 2h)
-    upcoming = get_upcoming_matches(hours=2)
-    today = get_todays_matches()
-
-    for f in today:
-        ko = datetime.fromisoformat(f["kickoff_utc"].replace("Z", "+00:00"))
-        end_est = ko + timedelta(hours=2, minutes=30)  # max 150 min per match
+    for f in get_todays_matches():
+        ko = _ko_dt(f)
+        end_est = ko + timedelta(hours=2, minutes=30)
         if ko <= now <= end_est:
-            home = f.get("home", "?")
-            away = f.get("away", "?")
-            remaining = end_est - now
-            mins = int(remaining.total_seconds() / 60)
-            return False, f"Deploy after ~{mins} min. {home} vs {away} still live."
-
+            remaining = int((end_est - now).total_seconds() / 60)
+            return False, f"Deploy after ~{remaining} min. {f['home']} vs {f['away']} still live."
+    upcoming = get_upcoming_matches(hours=2)
     if upcoming:
         f = upcoming[0]
-        ko = datetime.fromisoformat(f["kickoff_utc"].replace("Z", "+00:00"))
-        wait = ko - now
-        mins = int(wait.total_seconds() / 60)
-        home = f.get("home", "?")
-        away = f.get("away", "?")
+        mins = int((_ko_dt(f) - now).total_seconds() / 60)
         if mins < 30:
-            return False, f"Wait. {home} vs {away} kicks off in {mins} min."
-
-    # Find next dead window
+            return False, f"Wait. {f['home']} vs {f['away']} kicks off in {mins} min."
     next_matches = get_upcoming_matches(hours=48)
     if next_matches:
-        next_ko = datetime.fromisoformat(next_matches[0]["kickoff_utc"].replace("Z", "+00:00"))
-        gap_h = int((next_ko - now).total_seconds() / 3600)
-        gap_m = int(((next_ko - now).total_seconds() % 3600) / 60)
-        return True, f"No matches for {gap_h}h {gap_m}m."
-
+        next_ko = _ko_dt(next_matches[0])
+        gap = next_ko - now
+        h = int(gap.total_seconds() / 3600)
+        m = int((gap.total_seconds() % 3600) / 60)
+        return True, f"No matches for {h}h {m}m."
     return True, "No upcoming matches found."
 
 
 # ─────────────────────────────────────────────
-# Phase helpers
+# PHASE HELPERS
 # ─────────────────────────────────────────────
 
 PHASE_RETRAIN_THRESHOLD: dict[str, float] = {
-    "group": 0.02,   # +2% minimum for group stage
+    "group": 0.02,
     "r32":   0.05,
     "r16":   0.05,
     "qf":    0.08,
@@ -437,24 +477,16 @@ PHASE_RETRAIN_THRESHOLD: dict[str, float] = {
     "final": 0.08,
 }
 
+
 def get_retrain_threshold(match_id: str) -> float:
-    """Return the improvement threshold for deploying a new model version."""
-    fixture = FIXTURE_BY_ID.get(match_id, {})
-    phase = fixture.get("phase", "group")
+    phase = FIXTURE_BY_ID.get(match_id, {}).get("phase", "group")
     return PHASE_RETRAIN_THRESHOLD.get(phase, 0.02)
 
 
 def get_phase_label(match_id: str) -> str:
-    """Human-readable phase label for UI."""
     labels = {
-        "group": "Group Stage",
-        "r32":   "Round of 32",
-        "r16":   "Round of 16",
-        "qf":    "Quarter-Final",
-        "sf":    "Semi-Final",
-        "3rd":   "Third Place",
-        "final": "Final",
+        "group": "Group Stage", "r32": "Round of 32", "r16": "Round of 16",
+        "qf": "Quarter-Final", "sf": "Semi-Final", "3rd": "Third Place", "final": "Final",
     }
-    fixture = FIXTURE_BY_ID.get(match_id, {})
-    phase = fixture.get("phase", "group")
+    phase = FIXTURE_BY_ID.get(match_id, {}).get("phase", "group")
     return labels.get(phase, phase.upper())

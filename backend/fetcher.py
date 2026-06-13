@@ -33,49 +33,49 @@ class SourceStatus(Enum):
 class Source:
     id: int
     name: str
-    url_template: str           # e.g. "https://bbc.com/sport/football/live/{match_slug}"
-    group: int                  # 1–6
+    url_template: str
+    group: int
     status: SourceStatus = SourceStatus.OK
     blocked_until: Optional[datetime] = None
     failed_attempts: int = 0
     last_user_agent_idx: int = 0
 
 
-# 18 sources in 6 groups of 3
+# 18 confirmed sources in 6 groups of 3
 ALL_SOURCES: list[Source] = [
     # GROUP 1 — Primary official
-    Source(1,  "FIFA",            "https://www.fifa.com/fifaplus/en/match-centre/{match_id}",           group=1),
-    Source(2,  "BBC Sport",       "https://www.bbc.com/sport/football/live/{match_slug}",               group=1),
-    Source(3,  "ESPN FC",         "https://www.espn.com/soccer/match/_/gameId/{espn_id}",               group=1),
+    Source(1,  "FIFA",             "https://www.fifa.com/fifaplus/en/match-centre/{match_id}",          group=1),
+    Source(2,  "BBC Sport",        "https://www.bbc.com/sport/football/live/{match_slug}",              group=1),
+    Source(3,  "ESPN FC",          "https://www.espn.com/soccer/match/_/gameId/{espn_id}",              group=1),
 
     # GROUP 2 — Live score specialists
-    Source(4,  "Sofascore",       "https://www.sofascore.com/football/match/{sofascore_id}",            group=2),
-    Source(5,  "FlashScore",      "https://www.flashscore.com/match/{flashscore_id}/",                  group=2),
-    Source(6,  "Sky Sports",      "https://www.skysports.com/football/live/{sky_id}",                   group=2),
+    Source(4,  "Sofascore",        "https://www.sofascore.com/football/match/{sofascore_id}",           group=2),
+    Source(5,  "FlashScore",       "https://www.flashscore.com/match/{flashscore_id}/",                 group=2),
+    Source(6,  "FotMob",           "https://www.fotmob.com/match/{fotmob_id}",                          group=2),
 
-    # GROUP 3 — Quality live blogs
-    Source(7,  "The Guardian",    "https://www.theguardian.com/football/live/{guardian_slug}",          group=3),
-    Source(8,  "90min",           "https://www.90min.com/posts/{ninety_slug}",                          group=3),
-    Source(9,  "Marca",           "https://www.marca.com/en/football/world-cup/{marca_id}.html",        group=3),
+    # GROUP 3 — Wire / agency
+    Source(7,  "Reuters Sports",   "https://www.reuters.com/sports/soccer/{reuters_slug}/",             group=3),
+    Source(8,  "AP News Sports",   "https://apnews.com/sports/soccer/{ap_slug}",                       group=3),
+    Source(9,  "CBS Sports",       "https://www.cbssports.com/soccer/gametracker/live/{cbs_id}/",       group=3),
 
-    # GROUP 4 — Match data sites
-    Source(10, "FootballCritic",  "https://www.footballcritic.com/match/{fc_id}",                      group=4),
-    Source(11, "WhoScored",       "https://www.whoscored.com/Matches/{ws_id}/Live/",                    group=4),
-    Source(12, "LiveScore",       "https://www.livescore.com/en/football/{ls_id}/",                     group=4),
+    # GROUP 4 — Live blogs
+    Source(10, "The Guardian",     "https://www.theguardian.com/football/live/{guardian_slug}",         group=4),
+    Source(11, "Sky Sports",       "https://www.skysports.com/football/live/{sky_id}",                  group=4),
+    Source(12, "Goal.com",         "https://www.goal.com/en/match/{goal_id}",                           group=4),
 
-    # GROUP 5 — Backup international
-    Source(13, "Goal.com",        "https://www.goal.com/en/match/{goal_id}",                            group=5),
-    Source(14, "OneFootball",     "https://onefootball.com/en/match/{of_id}/live",                      group=5),
-    Source(15, "Transfermarkt",   "https://www.transfermarkt.com/spielbericht/index/spielbericht/{tm_id}", group=5),
+    # GROUP 5 — Stats / data
+    Source(13, "WhoScored",        "https://www.whoscored.com/Matches/{ws_id}/Live/",                   group=5),
+    Source(14, "LiveScore",        "https://www.livescore.com/en/football/{ls_id}/",                    group=5),
+    Source(15, "AS English",       "https://en.as.com/soccer/world-cup/{as_id}/",                       group=5),
 
-    # GROUP 6 — Additional reliable
-    Source(16, "AS",              "https://en.as.com/soccer/world-cup/{as_id}/",                        group=6),
-    Source(17, "FotMob",          "https://www.fotmob.com/match/{fotmob_id}",                           group=6),
-    Source(18, "Soccerway",       "https://int.soccerway.com/matches/{sw_id}/",                         group=6),
+    # GROUP 6 — South Asian / international
+    Source(16, "Sportstar",        "https://sportstar.thehindu.com/football/{sportstar_slug}/",         group=6),
+    Source(17, "Indian Express",   "https://indianexpress.com/sports/football/{ie_slug}/",              group=6),
+    Source(18, "NDTV Sports",      "https://sports.ndtv.com/football/{ndtv_slug}",                     group=6),
 ]
 
 # ─────────────────────────────────────────────
-# USER AGENT ROTATION (10 real browser UAs)
+# USER AGENT ROTATION
 # ─────────────────────────────────────────────
 
 USER_AGENTS = [
@@ -93,7 +93,6 @@ USER_AGENTS = [
 
 
 def get_next_user_agent(source: Source) -> str:
-    """Return a different user agent each cycle per source."""
     idx = (source.last_user_agent_idx + 1) % len(USER_AGENTS)
     source.last_user_agent_idx = idx
     return USER_AGENTS[idx]
@@ -101,54 +100,40 @@ def get_next_user_agent(source: Source) -> str:
 
 # ─────────────────────────────────────────────
 # GROUP ROTATION STATE
-# Assigned fresh each morning, random but never repeating same group on same match
 # ─────────────────────────────────────────────
 
 class GroupRotation:
-    """
-    Manages daily group assignment for each match.
-    Rotates groups randomly each morning.
-    Guarantees: same match never uses same group two days running.
-    """
-
     def __init__(self):
-        self._assignments: dict[str, int] = {}    # match_id → group_id (today)
-        self._previous: dict[str, int] = {}       # match_id → group_id (yesterday)
+        self._assignments: dict[str, int] = {}
+        self._previous: dict[str, int] = {}
         self._last_rotation_date: Optional[str] = None
 
     def _groups_for_match(self, match_id: str) -> list[int]:
-        """All 6 group ids, excluding yesterday's group for this match."""
         excluded = self._previous.get(match_id)
-        available = [g for g in range(1, 7) if g != excluded]
-        return available
+        return [g for g in range(1, 7) if g != excluded]
 
     def rotate_if_new_day(self, match_ids: list[str]):
-        """Call once per morning. Assigns new random groups."""
         today = datetime.utcnow().strftime("%Y-%m-%d")
         if self._last_rotation_date == today:
-            return  # Already rotated today
-
+            return
         logger.info(f"[GroupRotation] Rotating groups for {len(match_ids)} matches — {today}")
         self._previous = dict(self._assignments)
-
         for match_id in match_ids:
             available = self._groups_for_match(match_id)
             self._assignments[match_id] = random.choice(available)
-
         self._last_rotation_date = today
 
     def get_group(self, match_id: str) -> int:
         return self._assignments.get(match_id, 1)
 
     def swap_group(self, match_id: str):
-        """Called when entire group is blocked. Swap to different group immediately."""
         current = self._assignments.get(match_id, 1)
         previous = self._previous.get(match_id)
         excluded = {current, previous}
         available = [g for g in range(1, 7) if g not in excluded]
         if available:
             new_group = random.choice(available)
-            logger.warning(f"[GroupRotation] Match {match_id}: swapping group {current} → {new_group} (blocked)")
+            logger.warning(f"[GroupRotation] Match {match_id}: swapping group {current} → {new_group}")
             self._assignments[match_id] = new_group
         else:
             logger.error(f"[GroupRotation] Match {match_id}: no available groups to swap to!")
@@ -162,18 +147,15 @@ group_rotation = GroupRotation()
 # ─────────────────────────────────────────────
 
 class SourceHealthTracker:
-    """Tracks blocked/failed sources per match cycle."""
-
-    BLOCK_RETRY_SECONDS = 360       # 6 minutes before retry
-    REMOVE_AFTER_ATTEMPTS = 3       # remove for 1 hour after 3 fails
-    HOURLY_RESTORE_SECONDS = 3600   # auto-restore after 1 hour
+    BLOCK_RETRY_SECONDS = 360
+    REMOVE_AFTER_ATTEMPTS = 3
+    HOURLY_RESTORE_SECONDS = 3600
 
     def __init__(self):
         self._sources: dict[int, Source] = {s.id: s for s in ALL_SOURCES}
         self._removed_until: dict[int, datetime] = {}
 
     def get_sources_for_group(self, group_id: int) -> list[Source]:
-        """Return sources for a group, skipping those currently removed."""
         now = datetime.utcnow()
         result = []
         for s in self._sources.values():
@@ -181,11 +163,9 @@ class SourceHealthTracker:
                 continue
             removed_until = self._removed_until.get(s.id)
             if removed_until and now < removed_until:
-                logger.debug(f"[Health] Source {s.name} still removed until {removed_until}")
                 continue
             elif removed_until and now >= removed_until:
-                # Auto-restore after 1 hour
-                logger.info(f"[Health] Auto-restoring source {s.name} after 1-hour removal")
+                logger.info(f"[Health] Auto-restoring source {s.name}")
                 del self._removed_until[s.id]
                 s.status = SourceStatus.OK
                 s.failed_attempts = 0
@@ -193,21 +173,15 @@ class SourceHealthTracker:
         return result
 
     def mark_blocked(self, source_id: int) -> bool:
-        """
-        Mark source as blocked (403/429).
-        Returns True if source should be removed for 1 hour.
-        """
         s = self._sources[source_id]
         s.failed_attempts += 1
         s.status = SourceStatus.BLOCKED
         s.blocked_until = datetime.utcnow() + timedelta(seconds=self.BLOCK_RETRY_SECONDS)
-
         if s.failed_attempts >= self.REMOVE_AFTER_ATTEMPTS:
             self._removed_until[source_id] = datetime.utcnow() + timedelta(seconds=self.HOURLY_RESTORE_SECONDS)
-            logger.warning(f"[Health] Source {s.name} removed for 1 hour after {s.failed_attempts} blocked attempts")
+            logger.warning(f"[Health] Source {s.name} removed for 1 hour")
             return True
-
-        logger.warning(f"[Health] Source {s.name} blocked — retry in 6 min (attempt {s.failed_attempts})")
+        logger.warning(f"[Health] Source {s.name} blocked — retry in 6 min")
         return False
 
     def mark_ok(self, source_id: int):
@@ -222,28 +196,24 @@ class SourceHealthTracker:
         s.status = SourceStatus.FAILED
 
     def get_health_report(self) -> list[dict]:
-        """For admin dashboard — status of all 18 sources."""
         now = datetime.utcnow()
-        report = []
-        for s in self._sources.values():
-            removed_until = self._removed_until.get(s.id)
-            report.append({
-                "id": s.id,
-                "name": s.name,
-                "group": s.group,
-                "status": s.status.value,
-                "failed_attempts": s.failed_attempts,
-                "blocked_until": s.blocked_until.isoformat() if s.blocked_until else None,
-                "removed_until": removed_until.isoformat() if removed_until and now < removed_until else None,
-            })
-        return report
+        return [{
+            "id": s.id,
+            "name": s.name,
+            "group": s.group,
+            "status": s.status.value,
+            "failed_attempts": s.failed_attempts,
+            "blocked_until": s.blocked_until.isoformat() if s.blocked_until else None,
+            "removed_until": self._removed_until[s.id].isoformat()
+                if s.id in self._removed_until and now < self._removed_until[s.id] else None,
+        } for s in self._sources.values()]
 
 
 source_health = SourceHealthTracker()
 
 
 # ─────────────────────────────────────────────
-# RAW FETCH RESULT
+# FETCH RESULT
 # ─────────────────────────────────────────────
 
 @dataclass
@@ -252,7 +222,7 @@ class FetchResult:
     source_id: int
     success: bool
     raw_html: Optional[str] = None
-    raw_text: Optional[str] = None     # commentary extracted from HTML
+    raw_text: Optional[str] = None
     error: Optional[str] = None
     status_code: Optional[int] = None
     latency_ms: Optional[float] = None
@@ -267,10 +237,6 @@ async def fetch_single_source(
     source: Source,
     match_context: dict,
 ) -> FetchResult:
-    """
-    Fetch one source for one match.
-    match_context has slugs/IDs needed to build the URL.
-    """
     start = time.time()
     url = _build_url(source, match_context)
     if not url:
@@ -290,7 +256,6 @@ async def fetch_single_source(
         "Sec-Fetch-Site": "none",
     }
 
-    # Randomise request interval ±5 seconds (handled by caller, but record intent)
     try:
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             latency = (time.time() - start) * 1000
@@ -306,24 +271,14 @@ async def fetch_single_source(
 
             if resp.status != 200:
                 source_health.mark_failed(source.id)
-                return FetchResult(
-                    source.name, source.id, False,
-                    status_code=resp.status,
-                    error=f"HTTP {resp.status}",
-                    latency_ms=latency,
-                )
+                return FetchResult(source.name, source.id, False, status_code=resp.status,
+                                   error=f"HTTP {resp.status}", latency_ms=latency)
 
             html = await resp.text(errors="replace")
             text = _extract_commentary(html, source)
             source_health.mark_ok(source.id)
-
-            return FetchResult(
-                source.name, source.id, True,
-                raw_html=html,
-                raw_text=text,
-                status_code=200,
-                latency_ms=latency,
-            )
+            return FetchResult(source.name, source.id, True, raw_html=html, raw_text=text,
+                               status_code=200, latency_ms=latency)
 
     except asyncio.TimeoutError:
         source_health.mark_failed(source.id)
@@ -334,74 +289,72 @@ async def fetch_single_source(
 
 
 def _build_url(source: Source, match_context: dict) -> Optional[str]:
-    """Build URL from template + match context dict. Returns None if missing key."""
     try:
         return source.url_template.format(**match_context)
-    except KeyError as e:
-        logger.debug(f"[Fetch] Source {source.name} missing URL key: {e}")
+    except KeyError:
         return None
 
 
 def _extract_commentary(html: str, source: Source) -> str:
-    """
-    Extract live commentary text from HTML.
-    Each source has slightly different structure — we grab the most text-rich elements.
-    Parser.py (Groq) will make sense of raw text — we just need enough signal.
-    """
     try:
         soup = BeautifulSoup(html, "lxml")
-
-        # Remove noise
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "ads"]):
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
             tag.decompose()
 
-        # Source-specific selectors (best effort, falls back to body text)
         selectors_by_source = {
-            "BBC Sport":    ["#live-text-commentary", ".lx-stream__post", ".sp-c-live-region"],
-            "ESPN FC":      [".LiveScore", ".match-header__events", ".Commentary"],
-            "Sofascore":    [".incident", ".event__item", "[data-testid='incident']"],
-            "The Guardian": [".block--content", ".sport-body-text", ".liveblog-body"],
-            "Sky Sports":   [".sdc-live-blog__entry", ".match-centre__commentary"],
+            "BBC Sport":       ["#live-text-commentary", ".lx-stream__post", ".sp-c-live-region"],
+            "ESPN FC":         [".LiveScore", ".match-header__events", ".Commentary"],
+            "Sofascore":       [".incident", ".event__item", "[data-testid='incident']"],
+            "The Guardian":    [".block--content", ".sport-body-text", ".liveblog-body"],
+            "Sky Sports":      [".sdc-live-blog__entry", ".match-centre__commentary"],
+            "FotMob":          [".matchEvent", ".live-event", "[class*='event']"],
+            "Goal.com":        [".match-events", ".live-commentary", "[class*='commentary']"],
+            "WhoScored":       [".match-centre-header", ".incidents-table"],
+            "CBS Sports":      [".game-tracker", ".play-by-play"],
+            "Reuters Sports":  [".article-body", ".StandardArticleBody_body"],
+            "AP News Sports":  [".Article", ".RichTextStoryBody"],
+            "AS English":      [".live-commentary", ".match-tracker"],
+            "LiveScore":       [".match-detail", ".event-list"],
+            "Sportstar":       [".article-content", ".live-blog"],
+            "Indian Express":  [".full-details", ".story-details"],
+            "NDTV Sports":     [".ins_storybody", ".story__content"],
         }
 
         selectors = selectors_by_source.get(source.name, [])
         texts = []
-
         for sel in selectors:
             elements = soup.select(sel)
             if elements:
-                for el in elements[:50]:   # cap at 50 elements to keep tokens down
+                for el in elements[:50]:
                     t = el.get_text(separator=" ", strip=True)
                     if t:
                         texts.append(t)
-                break   # found good selector, stop
+                break
 
         if not texts:
-            # Generic fallback: grab all paragraph + list item text
             for tag in soup.find_all(["p", "li", "span", "div"], limit=100):
                 t = tag.get_text(separator=" ", strip=True)
-                if len(t) > 30:    # skip short noise fragments
+                if len(t) > 30:
                     texts.append(t)
 
         combined = " | ".join(texts)
-        return combined[:8000]   # cap to keep Groq tokens reasonable
-
+        return combined[:8000]
     except Exception as e:
         logger.warning(f"[Fetch] Commentary extraction failed for {source.name}: {e}")
         return ""
 
 
 # ─────────────────────────────────────────────
-# PARALLEL GROUP FETCH (main entry point)
+# PARALLEL GROUP FETCH
 # ─────────────────────────────────────────────
 
 @dataclass
 class GroupFetchResult:
     match_id: str
-    valid_results: list[FetchResult]   # ≥3 success = cross-reference mode
+    valid_results: list[FetchResult]
     all_results: list[FetchResult]
     group_used: int
-    needs_fallback: bool               # True if <3 valid sources returned
+    needs_fallback: bool
 
 
 async def fetch_match_group(
@@ -409,38 +362,27 @@ async def fetch_match_group(
     match_context: dict,
     session: aiohttp.ClientSession,
 ) -> GroupFetchResult:
-    """
-    Fetch all 3 sources in assigned group simultaneously (async parallel).
-    Returns result with valid_results count. Caller triggers fallback if <3.
-    """
     group_id = group_rotation.get_group(match_id)
     sources = source_health.get_sources_for_group(group_id)
 
     if not sources:
         logger.error(f"[Fetch] Match {match_id}: No available sources in group {group_id}!")
         group_rotation.swap_group(match_id)
-        # Retry with new group
         group_id = group_rotation.get_group(match_id)
         sources = source_health.get_sources_for_group(group_id)
 
     logger.info(f"[Fetch] Match {match_id}: Fetching group {group_id} — {[s.name for s in sources]}")
 
-    # Randomise ±5s between source requests in the group
-    tasks = []
-    for i, source in enumerate(sources):
-        delay = random.uniform(0, 5)
-        tasks.append(_fetch_with_delay(session, source, match_context, delay))
-
+    tasks = [
+        _fetch_with_delay(session, source, match_context, random.uniform(0, 5))
+        for source in sources
+    ]
     results: list[FetchResult] = await asyncio.gather(*tasks, return_exceptions=False)
     valid = [r for r in results if r.success and r.raw_text]
 
-    # Check if entire group is blocked
-    all_blocked = all(
-        r.status_code in (403, 429)
-        for r in results if r.status_code is not None
-    )
-    if all_blocked and len(results) > 0:
-        logger.warning(f"[Fetch] Match {match_id}: Entire group {group_id} blocked — swapping group")
+    all_blocked = all(r.status_code in (403, 429) for r in results if r.status_code)
+    if all_blocked and results:
+        logger.warning(f"[Fetch] Match {match_id}: Entire group {group_id} blocked — swapping")
         group_rotation.swap_group(match_id)
 
     return GroupFetchResult(
@@ -452,48 +394,20 @@ async def fetch_match_group(
     )
 
 
-async def _fetch_with_delay(
-    session: aiohttp.ClientSession,
-    source: Source,
-    match_context: dict,
-    delay: float,
-) -> FetchResult:
+async def _fetch_with_delay(session, source, match_context, delay):
     if delay > 0:
         await asyncio.sleep(delay)
     return await fetch_single_source(session, source, match_context)
 
 
-# ─────────────────────────────────────────────
-# MULTI-MATCH PARALLEL FETCH (up to 6 matches)
-# ─────────────────────────────────────────────
-
-async def fetch_all_active_matches(
-    matches: list[dict],
-) -> list[GroupFetchResult]:
-    """
-    Fetch all active matches simultaneously.
-    Each match gets its own source group.
-    Returns list of GroupFetchResult — caller handles fallback for those with needs_fallback=True.
-    """
+async def fetch_all_active_matches(matches: list[dict]) -> list[GroupFetchResult]:
     if not matches:
         return []
-
     logger.info(f"[Fetch] Starting parallel fetch for {len(matches)} matches")
-
-    connector = aiohttp.TCPConnector(
-        limit=30,                    # max 30 simultaneous connections
-        limit_per_host=5,            # max 5 per domain (polite)
-        ttl_dns_cache=300,
-        ssl=False,                   # skip SSL verify for speed (we validate data via parser)
-    )
-
+    connector = aiohttp.TCPConnector(limit=30, limit_per_host=5, ttl_dns_cache=300, ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
         tasks = [
-            fetch_match_group(
-                match_id=m["match_id"],
-                match_context=m,
-                session=session,
-            )
+            fetch_match_group(match_id=m["match_id"], match_context=m, session=session)
             for m in matches
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -510,68 +424,38 @@ async def fetch_all_active_matches(
 
 
 # ─────────────────────────────────────────────
-# TAVILY SEARCH FALLBACK
+# FALLBACKS
 # ─────────────────────────────────────────────
 
 async def tavily_fallback(match_id: str, home_team: str, away_team: str) -> Optional[str]:
-    """
-    Called when <3 valid sources returned.
-    Uses Tavily to search for live match updates.
-    """
     import os
     from tavily import TavilyClient
-
     api_key = os.getenv("TAVILY_API_KEY")
     if not api_key:
-        logger.error("[Fallback] TAVILY_API_KEY not set")
         return None
-
     query = f"{home_team} vs {away_team} live score World Cup 2026"
-    logger.warning(f"[Fallback] Triggering Tavily search: '{query}'")
-
+    logger.warning(f"[Fallback] Tavily: '{query}'")
     try:
         client = TavilyClient(api_key=api_key)
-        response = client.search(
-            query=query,
-            search_depth="basic",
-            max_results=3,
-            include_raw_content=True,
-        )
-        texts = []
-        for result in response.get("results", []):
-            content = result.get("raw_content") or result.get("content", "")
-            if content:
-                texts.append(f"[{result.get('title', 'Unknown')}] {content[:1500]}")
-
-        combined = " | ".join(texts)
-        logger.info(f"[Fallback] Tavily returned {len(texts)} results for {match_id}")
-        return combined if combined else None
-
+        response = client.search(query=query, search_depth="basic", max_results=3, include_raw_content=True)
+        texts = [
+            f"[{r.get('title', '')}] {(r.get('raw_content') or r.get('content', ''))[:1500]}"
+            for r in response.get("results", [])
+            if r.get("raw_content") or r.get("content")
+        ]
+        return " | ".join(texts) or None
     except Exception as e:
-        logger.error(f"[Fallback] Tavily failed for {match_id}: {e}")
+        logger.error(f"[Fallback] Tavily failed: {e}")
         return None
 
-
-# ─────────────────────────────────────────────
-# LINKUP SEARCH FALLBACK (secondary)
-# ─────────────────────────────────────────────
 
 async def linkup_fallback(match_id: str, home_team: str, away_team: str) -> Optional[str]:
-    """
-    Called when Tavily also fails.
-    Uses Linkup as secondary search fallback.
-    """
-    import os
-    import httpx
-
+    import os, httpx
     api_key = os.getenv("LINKUP_API_KEY")
     if not api_key:
-        logger.error("[Fallback] LINKUP_API_KEY not set")
         return None
-
     query = f"{home_team} {away_team} live World Cup score"
-    logger.warning(f"[Fallback] Triggering Linkup search: '{query}'")
-
+    logger.warning(f"[Fallback] Linkup: '{query}'")
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -581,45 +465,30 @@ async def linkup_fallback(match_id: str, home_team: str, away_team: str) -> Opti
                 timeout=10,
             )
             resp.raise_for_status()
-            data = resp.json()
-            answer = data.get("answer", "")
-            logger.info(f"[Fallback] Linkup returned answer for {match_id}")
-            return answer if answer else None
-
+            return resp.json().get("answer") or None
     except Exception as e:
-        logger.error(f"[Fallback] Linkup failed for {match_id}: {e}")
+        logger.error(f"[Fallback] Linkup failed: {e}")
         return None
 
 
 # ─────────────────────────────────────────────
-# FETCH INTERVALS (adaptive)
+# FETCH INTERVALS
 # ─────────────────────────────────────────────
 
 def get_fetch_interval(active_matches: int, match_state: str) -> int:
-    """
-    Returns fetch interval in seconds based on match count and state.
-    """
     if match_state in ("HT", "ET_HT"):
-        return 300          # 5 minutes during half time
+        return 300
     if match_state == "PENALTIES":
-        return 30           # 30 seconds (kicks every 60-90s)
+        return 30
     if match_state == "SCHEDULED":
-        return 780          # 13 minutes pre-match keep-alive
+        return 780
     if active_matches == 1:
         return 15
     if active_matches == 2:
         return 20
-    return random.randint(30, 60)   # 3+ matches: 30-60s
+    return random.randint(30, 60)
 
-
-# ─────────────────────────────────────────────
-# DAILY GROUP ROTATION INIT
-# ─────────────────────────────────────────────
 
 def init_daily_rotation(match_ids: list[str]):
-    """
-    Call once each morning with all match_ids for the day.
-    Assigns groups, ensuring no match repeats yesterday's group.
-    """
     group_rotation.rotate_if_new_day(match_ids)
     logger.info(f"[GroupRotation] Today's assignments: {group_rotation._assignments}")
