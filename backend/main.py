@@ -563,8 +563,27 @@ async def health_detailed(db: Session = Depends(get_db)):
 @limiter.limit("15/minute")
 async def get_matches(request: Request, db: Session = Depends(get_db)):
     matches = db.query(MatchDB).order_by(MatchDB.kickoff_utc).all()
-    return [_match_to_dict(m) for m in matches]
 
+    # Group by UTC date
+    days: dict[str, list] = {}
+    for m in matches:
+        date_key = m.kickoff_utc.strftime("%Y-%m-%d") if m.kickoff_utc else "unknown"
+        if date_key not in days:
+            days[date_key] = []
+        days[date_key].append(_match_to_dict(m))
+
+    live_states = {"LIVE", "HT", "LIVE_2H", "ET_1H", "ET_HT", "ET_2H", "PENALTIES"}
+    finished_states = {"FINISHED", "FT"}
+
+    return {
+        "days": [
+            {"date": date, "matches": day_matches}
+            for date, day_matches in sorted(days.items())
+        ],
+        "live_count": sum(1 for m in matches if m.state in live_states),
+        "completed_matches": sum(1 for m in matches if m.state in finished_states),
+        "total_matches": 104,
+    }
 
 @app.get("/api/matches/{match_id}")
 @limiter.limit("15/minute")
