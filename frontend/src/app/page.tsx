@@ -95,10 +95,10 @@ function MatchCard({ match }: { match: Match }) {
 
 // ── DAY GROUP ─────────────────────────────────────────────────────────────────
 function DayGroup({ date, matches }: { date: string; matches: Match[] }) {
-  const d = new Date(date)
+  const d = new Date(date + 'T12:00:00') // local noon — avoids timezone shift
   const label = d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
   const hasLive = matches.some(m => isLive(m.state))
-
+  
   return (
     <section>
       <div className="flex items-center gap-3 mb-4">
@@ -135,9 +135,26 @@ export default function HomePage() {
   useEffect(() => {
     getMatches()
       .then(data => {
-        // Seed store
-        data.days.forEach(day => day.matches.forEach(m => setMatch(m)))
-        setOverview(data)
+        // Re-group by local date instead of UTC date
+        const allMatches: Match[] = data.days.flatMap(d => d.matches)
+        
+        const localDays: Record<string, Match[]> = {}
+        allMatches.forEach(m => {
+          const localDate = new Date(m.kickoff_utc)
+            .toLocaleDateString('en-CA') // gives YYYY-MM-DD in local time
+          if (!localDays[localDate]) localDays[localDate] = []
+          localDays[localDate].push(m)
+        })
+
+        const regrouped = {
+          ...data,
+          days: Object.entries(localDays)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([date, matches]) => ({ date, matches }))
+        }
+
+        regrouped.days.forEach(day => day.matches.forEach(m => setMatch(m)))
+        setOverview(regrouped)
       })
       .catch(() => setError('Could not load matches. Retrying…'))
       .finally(() => setLoading(false))
