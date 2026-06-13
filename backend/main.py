@@ -992,7 +992,7 @@ async def admin_sync_sheets_simple(request: Request, background_tasks: Backgroun
 
 
 # ─────────────────────────────────────────────
-# ADMIN — ADD MATCH
+# ADMIN — ADD MATCH / UPDATE SCORE
 # ─────────────────────────────────────────────
 
 @app.post("/admin/matches/add")
@@ -1023,6 +1023,34 @@ async def admin_add_match(request: Request, body: AddMatchRequest, db: Session =
     logger.info(f"Match added: {body.match_id} — {body.home_team} vs {body.away_team}")
     return {"status": "created", "match_id": body.match_id}
 
+class AddMatchRequest(BaseModel):
+    match_id: str
+    home_team: str
+    away_team: str
+    kickoff_utc: str
+    venue: Optional[str] = None
+    group: Optional[str] = None
+    phase: Optional[str] = "group"
+
+class UpdateScoreRequest(BaseModel):
+    match_id: str
+    home_score: int
+    away_score: int
+
+
+@app.post("/admin/matches/update-score")
+@limiter.limit("60/minute")
+async def admin_update_score(request: Request, body: UpdateScoreRequest, db: Session = Depends(get_db)):
+    check_admin_password(request)
+    match = db.query(MatchDB).filter(MatchDB.id == body.match_id).first()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+    match.home_score = body.home_score
+    match.away_score = body.away_score
+    match.last_updated = datetime.now(timezone.utc)
+    db.commit()
+    logger.info(f"Score updated: {body.match_id} — {body.home_score}-{body.away_score}")
+    return {"success": True, "match_id": body.match_id, "score": f"{body.home_score}-{body.away_score}"}
 
 # ─────────────────────────────────────────────
 # EXISTING ADMIN ENDPOINTS (token-based)
