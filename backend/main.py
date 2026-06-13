@@ -2,8 +2,6 @@
 Project Delta — main.py
 FastAPI backend: all routes, SSE streams, admin dashboard API,
 voting endpoints, match data, scheduled jobs, keep-alive.
-
-Session 3 — production-ready, no placeholders.
 """
 
 import asyncio
@@ -185,7 +183,6 @@ class LiveEventDB(Base):
 
 
 def init_db():
-    """Call this once at startup — not at import time."""
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created/verified")
@@ -200,6 +197,7 @@ def get_db():
         yield db
     finally:
         db.close()
+
 
 # ─────────────────────────────────────────────
 # SSE BROKER
@@ -294,19 +292,12 @@ def create_admin_token() -> str:
 
 
 def check_admin_password(request: Request) -> bool:
-    """
-    Accept EITHER:
-    1. Raw password as Bearer token (what the frontend sends)
-    2. A valid JWT token from /api/admin/login
-    """
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Admin auth required")
     token = auth.split(" ", 1)[1]
-    # Check raw password first
     if token == ADMIN_PASSWORD:
         return True
-    # Check session token
     if verify_admin_token(token):
         return True
     raise HTTPException(status_code=401, detail="Invalid password or expired token")
@@ -585,6 +576,7 @@ async def get_matches(request: Request, db: Session = Depends(get_db)):
         "total_matches": 104,
     }
 
+
 @app.get("/api/matches/{match_id}")
 @limiter.limit("15/minute")
 async def get_match(match_id: str, request: Request, db: Session = Depends(get_db)):
@@ -605,7 +597,7 @@ async def get_match(match_id: str, request: Request, db: Session = Depends(get_d
     )
     result = _match_to_dict(match)
     if prediction:
-        result["prediction"] = _prediction_to_dict(prediction)
+        result["ai_prediction"] = _prediction_to_dict(prediction)
     result["live_events"] = [_event_to_dict(e) for e in events]
     return result
 
@@ -828,7 +820,7 @@ async def admin_login(request: Request, body: AdminLoginRequest):
 
 
 # ─────────────────────────────────────────────
-# ADMIN ROUTES — frontend calls these with raw password as Bearer token
+# ADMIN ROUTES — frontend calls with raw password as Bearer token
 # ─────────────────────────────────────────────
 
 @app.get("/admin/status")
@@ -1000,7 +992,7 @@ async def admin_sync_sheets_simple(request: Request, background_tasks: Backgroun
 
 
 # ─────────────────────────────────────────────
-# ADMIN — ADD MATCH (for seeding fixtures)
+# ADMIN — ADD MATCH
 # ─────────────────────────────────────────────
 
 @app.post("/admin/matches/add")
@@ -1033,7 +1025,7 @@ async def admin_add_match(request: Request, body: AddMatchRequest, db: Session =
 
 
 # ─────────────────────────────────────────────
-# EXISTING ADMIN ENDPOINTS (token-based, kept for compatibility)
+# EXISTING ADMIN ENDPOINTS (token-based)
 # ─────────────────────────────────────────────
 
 @app.get("/api/admin/dashboard")
@@ -1067,7 +1059,7 @@ async def admin_dashboard(request: Request, db: Session = Depends(get_db), _: bo
 async def admin_override_state(request: Request, body: MatchStateOverride, db: Session = Depends(get_db), _: bool = Depends(get_admin)):
     valid_states = {"SCHEDULED", "LIVE", "HT", "LIVE_2H", "FT", "ET_1H", "ET_HT", "ET_2H", "PENALTIES", "FINISHED", "VOID"}
     if body.state not in valid_states:
-        raise HTTPException(status_code=400, detail=f"Invalid state")
+        raise HTTPException(status_code=400, detail="Invalid state")
     match = db.query(MatchDB).filter(MatchDB.id == body.match_id).first()
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
@@ -1103,19 +1095,33 @@ async def internal_publish(request: Request, body: dict):
 # ─────────────────────────────────────────────
 
 def _match_to_dict(match: MatchDB, admin: bool = False) -> dict:
+    """
+    Returns match dict shaped to match the frontend Match TypeScript interface.
+    home/away are Team objects: { name, code, fifa_rank }
+    """
     d = {
-        "id": match.id,
-        "home_team": match.home_team,
-        "away_team": match.away_team,
+        "match_id": match.id,
+        "home": {
+            "name": match.home_team,
+            "code": match.home_team[:3].upper(),
+            "fifa_rank": 0,
+        },
+        "away": {
+            "name": match.away_team,
+            "code": match.away_team[:3].upper(),
+            "fifa_rank": 0,
+        },
         "kickoff_utc": match.kickoff_utc.isoformat() if match.kickoff_utc else None,
-        "venue": match.venue,
+        "venue": match.venue or "",
+        "city": match.venue.split(",")[-1].strip() if match.venue else "",
         "group": match.group_name,
-        "phase": match.phase,
+        "phase": match.phase or "group",
+        "match_number": 0,
         "state": match.state,
-        "score": {"home": match.home_score, "away": match.away_score},
-        "minute": match.minute,
-        "ai_context": match.ai_context,
-        "model_confidence": match.model_confidence,
+        "score": {"home": match.home_score or 0, "away": match.away_score or 0},
+        "minute": match.minute or "0",
+        "events": match.events or [],
+        "ai_prediction": None,
         "model_version": match.model_version,
         "source_used": match.source_used,
         "last_updated": match.last_updated.isoformat() if match.last_updated else None,
@@ -1126,22 +1132,25 @@ def _match_to_dict(match: MatchDB, admin: bool = False) -> dict:
     if match.went_to_penalties:
         d["penalties"] = {"home": match.penalty_home, "away": match.penalty_away}
     if admin:
-        d["events"] = match.events
         d["post_match_debrief"] = match.post_match_debrief
     return d
 
 
 def _prediction_to_dict(p: PredictionDB) -> dict:
     return {
-        "home_win": p.home_win,
-        "draw": p.draw,
-        "away_win": p.away_win,
-        "confidence_range": f"{round((p.confidence_range_low or 0) * 100)}-{round((p.confidence_range_high or 0) * 100)}%",
+        "home_win": p.home_win or 0.33,
+        "draw": p.draw or 0.33,
+        "away_win": p.away_win or 0.33,
+        "confidence_range": {
+            "home_win": f"{round((p.confidence_range_low or 0) * 100)}-{round((p.confidence_range_high or 0) * 100)}%",
+            "draw": "—",
+            "away_win": "—",
+        },
         "predicted_scorer": p.predicted_scorer,
         "predicted_score": p.predicted_score,
-        "model_version": p.model_version,
-        "training_matches_seen": p.training_matches_seen,
-        "locked_at_85": p.locked_at_85,
+        "model_version": p.model_version or 0,
+        "training_match_count": p.training_matches_seen or 0,
+        "locked": p.locked_at_85 or False,
     }
 
 
