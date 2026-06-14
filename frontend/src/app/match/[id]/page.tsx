@@ -124,10 +124,21 @@ function ScheduledView({ match }: { match: Match }) {
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>
           Your Prediction
         </p>
-        <VoteButtons match={match} />
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 10, textAlign: 'center' }}>
-          Locks at 85&apos; · Anonymous · Research data only
-        </p>
+        {(() => {
+          const hoursUntil = (new Date(match.kickoff_utc).getTime() - Date.now()) / 3600000
+          return hoursUntil <= 24 ? (
+            <>
+              <VoteButtons match={match} />
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 10, textAlign: 'center' }}>
+                Locks at 85&apos; · Anonymous · Research data only
+              </p>
+            </>
+          ) : (
+            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', textAlign: 'center', padding: '12px 0' }}>
+              Voting opens in {Math.round(hoursUntil - 24)}h
+            </p>
+          )
+        })()}
       </div>
       <CrowdCard match={match} />
     </div>
