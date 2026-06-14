@@ -38,6 +38,7 @@ export function VoteButtons({ match, onVoted }: Props) {
         pick,
         fingerprint_hash: fingerprint,
         session_id: sessionId,
+        turnstile_token: 'dev-token',
       })
       if (res.success) {
         setVote(match.match_id, pick)
