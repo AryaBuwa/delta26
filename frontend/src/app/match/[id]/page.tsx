@@ -63,7 +63,7 @@ function MatchHeader({ match }: { match: Match }) {
   )
 }
 
-// ── CROWD CARD (zero votes placeholder) ──────────────────────────────────────
+// ── SHARED COMPONENTS ─────────────────────────────────────────────────────────
 
 function CrowdCard({ match, closed }: { match: Match; closed?: boolean }) {
   return (
@@ -83,9 +83,7 @@ function CrowdCard({ match, closed }: { match: Match; closed?: boolean }) {
   )
 }
 
-// ── AI CONFIDENCE CARD ────────────────────────────────────────────────────────
-
-function AIConfidenceCard({ match, shift }: { match: Match; shift?: string }) {
+function AIConfidenceCard({ match }: { match: Match }) {
   if (!match.ai_prediction) return null
   return (
     <div className="card" style={{ padding: 20 }}>
@@ -100,7 +98,6 @@ function AIConfidenceCard({ match, shift }: { match: Match; shift?: string }) {
         }}
         home={match.home}
         away={match.away}
-        shift={shift}
         modelVersion={match.ai_prediction.model_version}
         trainingCount={match.ai_prediction.training_match_count}
         locked={match.ai_prediction.locked}
@@ -115,22 +112,14 @@ function ScheduledView({ match }: { match: Match }) {
   return (
     <div className="flex flex-col gap-6">
       <div className="card" style={{ padding: '32px 24px' }}>
-        <ScoreBlock
-          home={match.home}
-          away={match.away}
-          score={match.score}
-          minute={match.minute}
-          state={match.state}
-        />
+        <ScoreBlock home={match.home} away={match.away} score={match.score} minute={match.minute} state={match.state} />
         <div style={{ textAlign: 'center', marginTop: 16 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', letterSpacing: '0.1em' }}>
             {formatKickoff(match.kickoff_utc)}
           </span>
         </div>
       </div>
-
       <AIConfidenceCard match={match} />
-
       <div className="card" style={{ padding: 20 }}>
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>
           Your Prediction
@@ -140,7 +129,6 @@ function ScheduledView({ match }: { match: Match }) {
           Locks at 85&apos; · Anonymous · Research data only
         </p>
       </div>
-
       <CrowdCard match={match} />
     </div>
   )
@@ -150,35 +138,20 @@ function ScheduledView({ match }: { match: Match }) {
 
 function LiveView({ match }: { match: Match }) {
   const votingOpen = canVote(match.state, match.minute)
-
   return (
     <div className="flex flex-col gap-6">
       <div className="card card-live" style={{ padding: '32px 24px' }}>
-        <ScoreBlock
-          home={match.home}
-          away={match.away}
-          score={match.score}
-          minute={match.minute}
-          state={match.state}
-        />
+        <ScoreBlock home={match.home} away={match.away} score={match.score} minute={match.minute} state={match.state} />
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', textAlign: 'center', marginTop: 8 }}>
           ~30s delayed
         </p>
       </div>
-
       <AIConfidenceCard match={match} />
-
-      {match.live?.ai_context && (
-        <AIContext text={match.live.ai_context} />
-      )}
-
-      {match.events && match.events.length > 0 && (
-        <EventTicker events={match.events as MatchEvent[]} />
-      )}
-
+      {match.live?.ai_context && <AIContext text={match.live.ai_context} />}
+      {match.events && match.events.length > 0 && <EventTicker events={match.events as MatchEvent[]} />}
       <div className="card" style={{ padding: 20 }}>
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>
-          {votingOpen ? 'Your Prediction' : 'Voting Locked at 85\''}
+          {votingOpen ? 'Your Prediction' : 'Voting Locked'}
         </p>
         <VoteButtons match={match} />
         {votingOpen && (
@@ -187,7 +160,6 @@ function LiveView({ match }: { match: Match }) {
           </p>
         )}
       </div>
-
       <CrowdCard match={match} />
     </div>
   )
@@ -199,29 +171,20 @@ function HalfTimeView({ match }: { match: Match }) {
   return (
     <div className="flex flex-col gap-6">
       <div className="card" style={{ padding: '32px 24px' }}>
-        <ScoreBlock
-          home={match.home}
-          away={match.away}
-          score={match.score}
-          minute={match.minute}
-          state={match.state}
-        />
+        <ScoreBlock home={match.home} away={match.away} score={match.score} minute={match.minute} state={match.state} />
         <div style={{ textAlign: 'center', marginTop: 12 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
             {match.state === 'HT' ? 'Half Time' : 'Extra Time Half Time'}
           </span>
         </div>
       </div>
-
       <AIConfidenceCard match={match} />
-
       <div className="card" style={{ padding: 20 }}>
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>
           Your Prediction
         </p>
         <VoteButtons match={match} />
       </div>
-
       <CrowdCard match={match} />
     </div>
   )
@@ -233,25 +196,12 @@ function PenaltyView({ match }: { match: Match }) {
   return (
     <div className="flex flex-col gap-6">
       <div className="card card-live" style={{ padding: '32px 24px' }}>
-        <ScoreBlock
-          home={match.home}
-          away={match.away}
-          score={match.score}
-          minute={match.minute}
-          state={match.state}
-        />
+        <ScoreBlock home={match.home} away={match.away} score={match.score} minute={match.minute} state={match.state} />
       </div>
-
       {match.live?.penalty_state && (
-        <PenaltyTracker
-          penaltyState={match.live.penalty_state}
-          home={match.home}
-          away={match.away}
-        />
+        <PenaltyTracker penaltyState={match.live.penalty_state} home={match.home} away={match.away} />
       )}
-
       <PenaltyMicroVote match={match} round={match.live?.penalty_state?.round ?? 1} />
-
       <CrowdCard match={match} />
     </div>
   )
@@ -263,28 +213,16 @@ function FinishedView({ match }: { match: Match }) {
   return (
     <div className="flex flex-col gap-6">
       <div className="card" style={{ padding: '32px 24px' }}>
-        <ScoreBlock
-          home={match.home}
-          away={match.away}
-          score={match.score}
-          minute={match.minute}
-          state={match.state}
-        />
+        <ScoreBlock home={match.home} away={match.away} score={match.score} minute={match.minute} state={match.state} />
         <div style={{ textAlign: 'center', marginTop: 12 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
             Full Time
           </span>
         </div>
       </div>
-
       <AIConfidenceCard match={match} />
-
-      {match.events && match.events.length > 0 && (
-        <EventTicker events={match.events as MatchEvent[]} />
-      )}
-
+      {match.events && match.events.length > 0 && <EventTicker events={match.events as MatchEvent[]} />}
       <CrowdCard match={match} closed />
-
       {match.pre_match_brief && (
         <div className="card" style={{ padding: 20 }}>
           <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
@@ -304,13 +242,7 @@ function FinishedView({ match }: { match: Match }) {
 function VoidView({ match }: { match: Match }) {
   return (
     <div className="card" style={{ padding: 32, textAlign: 'center' }}>
-      <ScoreBlock
-        home={match.home}
-        away={match.away}
-        score={match.score}
-        minute={match.minute}
-        state={match.state}
-      />
+      <ScoreBlock home={match.home} away={match.away} score={match.score} minute={match.minute} state={match.state} />
       <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent-red)', marginTop: 16, letterSpacing: '0.1em' }}>
         Match abandoned or postponed. All predictions cancelled.
       </p>
@@ -330,11 +262,7 @@ export default function MatchPage() {
   const { setMatch } = useMatchStore()
   const match = useMatchStore(s => s.matches[matchId])
 
-  useMatchSSE(matchId, (msg) => {
-    if (msg.match_id === matchId && msg.data) {
-      setMatch({ ...match, ...msg.data } as Match)
-    }
-  })
+  useMatchSSE(matchId)
 
   const load = useCallback(async () => {
     if (!matchId) return
