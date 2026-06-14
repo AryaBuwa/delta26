@@ -109,7 +109,8 @@ export interface Match {
   score: Score
   minute: string
   events: MatchEvent[]
-  ai_prediction: AIPrediction
+  pre_match_brief?: string
+  ai_prediction?: AIPrediction | null
   live?: LiveMatchData
 }
 
