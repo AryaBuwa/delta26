@@ -3,14 +3,14 @@
 // Handles all states: SCHEDULED, LIVE, HT, LIVE_2H, FT, ET_*, PENALTIES, FINISHED, VOID
 
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
-import type { Match } from '@/types'
+import type { Match, MatchEvent } from '@/types'
 import { getMatch } from '@/lib/api'
 import { useMatchStore } from '@/lib/store'
 import { useMatchSSE } from '@/hooks/useSSE'
-import { isLive, formatKickoff, cn } from '@/lib/utils'
+import { formatKickoff } from '@/lib/utils'
 import { StateTag, Spinner } from '@/components/ui'
 import { ScoreBlock } from '@/components/match/ScoreBlock'
 import { ConfidenceBar } from '@/components/match/ConfidenceBar'
@@ -44,7 +44,6 @@ function getPhaseLabel(phase: string): string {
 function MatchHeader({ match }: { match: Match }) {
   return (
     <div style={{ marginBottom: 24 }}>
-      {/* Back + breadcrumb */}
       <div className="flex items-center gap-2 mb-6">
         <Link href="/" style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', textDecoration: 'none', letterSpacing: '0.1em' }}>
           ← ALL MATCHES
@@ -54,8 +53,6 @@ function MatchHeader({ match }: { match: Match }) {
           {match.group ? `GROUP ${match.group}` : getPhaseLabel(match.phase)}
         </span>
       </div>
-
-      {/* State + venue */}
       <div className="flex items-center justify-between mb-4">
         <StateTag state={match.state} />
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)' }}>
@@ -66,12 +63,57 @@ function MatchHeader({ match }: { match: Match }) {
   )
 }
 
+// ── CROWD CARD (zero votes placeholder) ──────────────────────────────────────
+
+function CrowdCard({ match, closed }: { match: Match; closed?: boolean }) {
+  return (
+    <div className="card" style={{ padding: 20 }}>
+      <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
+        Crowd Prediction{closed ? ' — Final' : ''}
+      </p>
+      <div className="flex justify-between" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+        <span>{match.home.name} 0%</span>
+        <span>Draw 0%</span>
+        <span>{match.away.name} 0%</span>
+      </div>
+      <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 8 }}>
+        {closed ? 'Voting closed' : '0 votes'}
+      </p>
+    </div>
+  )
+}
+
+// ── AI CONFIDENCE CARD ────────────────────────────────────────────────────────
+
+function AIConfidenceCard({ match, shift }: { match: Match; shift?: string }) {
+  if (!match.ai_prediction) return null
+  return (
+    <div className="card" style={{ padding: 20 }}>
+      <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
+        AI Prediction · <span style={{ color: 'var(--accent)' }}>AI Generated</span>
+      </p>
+      <ConfidenceBar
+        confidence={{
+          home_win: match.ai_prediction.home_win,
+          draw: match.ai_prediction.draw,
+          away_win: match.ai_prediction.away_win,
+        }}
+        home={match.home}
+        away={match.away}
+        shift={shift}
+        modelVersion={match.ai_prediction.model_version}
+        trainingCount={match.ai_prediction.training_match_count}
+        locked={match.ai_prediction.locked}
+      />
+    </div>
+  )
+}
+
 // ── SCHEDULED VIEW ────────────────────────────────────────────────────────────
 
 function ScheduledView({ match }: { match: Match }) {
   return (
     <div className="flex flex-col gap-6">
-      {/* Score block — shows teams + kickoff time */}
       <div className="card" style={{ padding: '32px 24px' }}>
         <ScoreBlock
           home={match.home}
@@ -87,57 +129,19 @@ function ScheduledView({ match }: { match: Match }) {
         </div>
       </div>
 
-      {/* AI prediction if available */}
-      {match.ai_prediction && (
-        <div className="card" style={{ padding: 20 }}>
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
-            AI Prediction · <span style={{ color: 'var(--accent)' }}>AI Generated</span>
-          </p>
-          <ConfidenceBar
-            confidence={{
-              home_win: match.ai_prediction.home_win,
-              draw: match.ai_prediction.draw,
-              away_win: match.ai_prediction.away_win,
-            }}
-            home={match.home}
-            away={match.away}
-            modelVersion={match.ai_prediction.model_version}
-            trainingCount={match.ai_prediction.training_match_count}
-            locked={match.ai_prediction.locked}
-          />
-        </div>
-      )}
+      <AIConfidenceCard match={match} />
 
-      {/* Voting */}
       <div className="card" style={{ padding: 20 }}>
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>
           Your Prediction
         </p>
-        <VoteButtons
-          matchId={match.match_id}
-          home={match.home}
-          away={match.away}
-          disabled={false}
-        />
+        <VoteButtons match={match} />
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 10, textAlign: 'center' }}>
-          Locks at 85' · Anonymous · Research data only
+          Locks at 85&apos; · Anonymous · Research data only
         </p>
       </div>
 
-      {/* Vote distribution — zero for now */}
-      <div className="card" style={{ padding: 20 }}>
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
-          Crowd Prediction
-        </p>
-        <div className="flex justify-between" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-          <span>{match.home.name} 0%</span>
-          <span>Draw 0%</span>
-          <span>{match.away.name} 0%</span>
-        </div>
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 8 }}>
-          0 votes
-        </p>
-      </div>
+      <CrowdCard match={match} />
     </div>
   )
 }
@@ -149,7 +153,6 @@ function LiveView({ match }: { match: Match }) {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Live score */}
       <div className="card card-live" style={{ padding: '32px 24px' }}>
         <ScoreBlock
           home={match.home}
@@ -163,66 +166,63 @@ function LiveView({ match }: { match: Match }) {
         </p>
       </div>
 
-      {/* AI confidence */}
-      {match.ai_prediction && (
-        <div className="card" style={{ padding: 20 }}>
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
-            AI Confidence · <span style={{ color: 'var(--accent)' }}>AI Generated</span>
-          </p>
-          <ConfidenceBar
-            confidence={{
-              home_win: match.ai_prediction.home_win,
-              draw: match.ai_prediction.draw,
-              away_win: match.ai_prediction.away_win,
-            }}
-            home={match.home}
-            away={match.away}
-            modelVersion={match.ai_prediction.model_version}
-            trainingCount={match.ai_prediction.training_match_count}
-            locked={match.ai_prediction.locked}
-          />
-        </div>
-      )}
+      <AIConfidenceCard match={match} />
 
-      {/* AI context */}
       {match.live?.ai_context && (
-        <AIContext context={match.live.ai_context} />
+        <AIContext text={match.live.ai_context} />
       )}
 
-      {/* Events */}
       {match.events && match.events.length > 0 && (
-        <EventTicker events={match.events} />
+        <EventTicker events={match.events as MatchEvent[]} />
       )}
 
-      {/* Voting */}
       <div className="card" style={{ padding: 20 }}>
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
-          {votingOpen ? 'Your Prediction' : 'Voting Locked'}
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>
+          {votingOpen ? 'Your Prediction' : 'Voting Locked at 85\''}
         </p>
-        <VoteButtons
-          matchId={match.match_id}
-          home={match.home}
-          away={match.away}
-          disabled={!votingOpen}
-        />
+        <VoteButtons match={match} />
         {votingOpen && (
           <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 10, textAlign: 'center' }}>
-            Locks at 85'
+            Locks at 85&apos;
           </p>
         )}
       </div>
 
-      {/* Crowd */}
-      <div className="card" style={{ padding: 20 }}>
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
-          Crowd Prediction
-        </p>
-        <div className="flex justify-between" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-          <span>{match.home.name} 0%</span>
-          <span>Draw 0%</span>
-          <span>{match.away.name} 0%</span>
+      <CrowdCard match={match} />
+    </div>
+  )
+}
+
+// ── HALF TIME VIEW ────────────────────────────────────────────────────────────
+
+function HalfTimeView({ match }: { match: Match }) {
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="card" style={{ padding: '32px 24px' }}>
+        <ScoreBlock
+          home={match.home}
+          away={match.away}
+          score={match.score}
+          minute={match.minute}
+          state={match.state}
+        />
+        <div style={{ textAlign: 'center', marginTop: 12 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+            {match.state === 'HT' ? 'Half Time' : 'Extra Time Half Time'}
+          </span>
         </div>
       </div>
+
+      <AIConfidenceCard match={match} />
+
+      <div className="card" style={{ padding: 20 }}>
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>
+          Your Prediction
+        </p>
+        <VoteButtons match={match} />
+      </div>
+
+      <CrowdCard match={match} />
     </div>
   )
 }
@@ -241,6 +241,7 @@ function PenaltyView({ match }: { match: Match }) {
           state={match.state}
         />
       </div>
+
       {match.live?.penalty_state && (
         <PenaltyTracker
           penaltyState={match.live.penalty_state}
@@ -248,11 +249,10 @@ function PenaltyView({ match }: { match: Match }) {
           away={match.away}
         />
       )}
-      <PenaltyMicroVote
-        matchId={match.match_id}
-        home={match.home}
-        away={match.away}
-      />
+
+      <PenaltyMicroVote match={match} round={match.live?.penalty_state?.round ?? 1} />
+
+      <CrowdCard match={match} />
     </div>
   )
 }
@@ -262,7 +262,6 @@ function PenaltyView({ match }: { match: Match }) {
 function FinishedView({ match }: { match: Match }) {
   return (
     <div className="flex flex-col gap-6">
-      {/* Final score */}
       <div className="card" style={{ padding: '32px 24px' }}>
         <ScoreBlock
           home={match.home}
@@ -278,48 +277,14 @@ function FinishedView({ match }: { match: Match }) {
         </div>
       </div>
 
-      {/* AI result */}
-      {match.ai_prediction && (
-        <div className="card" style={{ padding: 20 }}>
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
-            AI Prediction · <span style={{ color: 'var(--accent)' }}>AI Generated</span>
-          </p>
-          <ConfidenceBar
-            confidence={{
-              home_win: match.ai_prediction.home_win,
-              draw: match.ai_prediction.draw,
-              away_win: match.ai_prediction.away_win,
-            }}
-            home={match.home}
-            away={match.away}
-            modelVersion={match.ai_prediction.model_version}
-            trainingCount={match.ai_prediction.training_match_count}
-            locked={match.ai_prediction.locked}
-          />
-        </div>
-      )}
+      <AIConfidenceCard match={match} />
 
-      {/* Events */}
       {match.events && match.events.length > 0 && (
-        <EventTicker events={match.events} />
+        <EventTicker events={match.events as MatchEvent[]} />
       )}
 
-      {/* Voting closed */}
-      <div className="card" style={{ padding: 20 }}>
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
-          Crowd Prediction — Final
-        </p>
-        <div className="flex justify-between" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-          <span>{match.home.name} 0%</span>
-          <span>Draw 0%</span>
-          <span>{match.away.name} 0%</span>
-        </div>
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 8 }}>
-          Voting closed
-        </p>
-      </div>
+      <CrowdCard match={match} closed />
 
-      {/* Post match debrief */}
       {match.pre_match_brief && (
         <div className="card" style={{ padding: 20 }}>
           <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
@@ -353,67 +318,11 @@ function VoidView({ match }: { match: Match }) {
   )
 }
 
-// ── HALF TIME VIEW ────────────────────────────────────────────────────────────
-
-function HalfTimeView({ match }: { match: Match }) {
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="card" style={{ padding: '32px 24px' }}>
-        <ScoreBlock
-          home={match.home}
-          away={match.away}
-          score={match.score}
-          minute={match.minute}
-          state={match.state}
-        />
-        <div style={{ textAlign: 'center', marginTop: 12 }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-            {match.state === 'HT' ? 'Half Time' : 'Extra Time Half Time'}
-          </span>
-        </div>
-      </div>
-
-      {match.ai_prediction && (
-        <div className="card" style={{ padding: 20 }}>
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
-            AI Confidence · <span style={{ color: 'var(--accent)' }}>AI Generated</span>
-          </p>
-          <ConfidenceBar
-            confidence={{
-              home_win: match.ai_prediction.home_win,
-              draw: match.ai_prediction.draw,
-              away_win: match.ai_prediction.away_win,
-            }}
-            home={match.home}
-            away={match.away}
-            modelVersion={match.ai_prediction.model_version}
-            trainingCount={match.ai_prediction.training_match_count}
-            locked={match.ai_prediction.locked}
-          />
-        </div>
-      )}
-
-      <div className="card" style={{ padding: 20 }}>
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
-          Your Prediction
-        </p>
-        <VoteButtons
-          matchId={match.match_id}
-          home={match.home}
-          away={match.away}
-          disabled={false}
-        />
-      </div>
-    </div>
-  )
-}
-
 // ── MAIN PAGE ─────────────────────────────────────────────────────────────────
 
 export default function MatchPage() {
   const params = useParams()
   const matchId = params?.id as string
-  const router = useRouter()
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -421,7 +330,6 @@ export default function MatchPage() {
   const { setMatch } = useMatchStore()
   const match = useMatchStore(s => s.matches[matchId])
 
-  // SSE for live updates
   useMatchSSE(matchId, (msg) => {
     if (msg.match_id === matchId && msg.data) {
       setMatch({ ...match, ...msg.data } as Match)
