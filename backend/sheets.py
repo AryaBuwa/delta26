@@ -14,7 +14,9 @@ import gspread
 from google.oauth2.service_account import Credentials
 from loguru import logger
 
-from config import settings  # GOOGLE_SHEETS_CREDENTIALS path + sheet ID
+import os
+GOOGLE_SHEETS_CREDENTIALS = os.getenv("GOOGLE_SHEETS_CREDENTIALS", "")
+SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "") # GOOGLE_SHEETS_CREDENTIALS path + sheet ID
 
 # ─────────────────────────────────────────────
 # Google Sheets setup
