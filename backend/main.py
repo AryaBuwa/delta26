@@ -440,8 +440,10 @@ async def lifespan(app: FastAPI):
         app.state.pipeline = PipelineOrchestrator(broker=broker)
         await app.state.pipeline.start()
         logger.info("✅ Pipeline started")
-    except ImportError:
-        logger.warning("pipeline.py not found — running without live pipeline")
+    except Exception as e:
+        logger.error(f"❌ Pipeline failed to start: {type(e).__name__}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         app.state.pipeline = None
 
     async def keep_alive():
