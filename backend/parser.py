@@ -5,6 +5,8 @@ Groq LLM extracts structured JSON from raw commentary text.
 Pydantic v2 validates schema. Player names checked against 1,104 squad list.
 Hallucination guard rejects impossible values.
 Failover: Groq 8b Key 1 → Key 2 → 70b → cached state.
+
+Session 8 patch: added parse_commentary alias for pipeline.py compatibility.
 """
 
 import os
@@ -52,10 +54,8 @@ def _player_known(name: str) -> bool:
     if not _KNOWN_PLAYERS:
         return True  # disabled if no squad data loaded
     name_lower = name.lower().strip()
-    # Exact match
     if name_lower in _KNOWN_PLAYERS:
         return True
-    # Last name match (e.g. "Haaland" matches "Erling Haaland")
     for known in _KNOWN_PLAYERS:
         if name_lower in known or known.endswith(name_lower):
             return True
@@ -105,7 +105,6 @@ class MatchEvent(BaseModel):
     @field_validator("minute")
     @classmethod
     def validate_minute(cls, v: str) -> str:
-        # Accept "45", "45+3", "90+7", "120" etc.
         clean = v.strip().replace("'", "")
         base_match = re.match(r"^(\d+)(\+\d+)?$", clean)
         if not base_match:
@@ -122,8 +121,6 @@ class MatchEvent(BaseModel):
             return v
         if not _player_known(v):
             logger.warning(f"[Parser] Unknown player: '{v}' — accepting but flagging")
-            # Don't reject — player might be unlisted (late squad change, etc.)
-            # Parser logs warning, admin can review
         return v.strip()
 
     @field_validator("team")
@@ -162,10 +159,10 @@ class ConfidenceModel(BaseModel):
 
 class ParsedMatchState(BaseModel):
     match_id: str
-    timestamp: str              # UTC ISO string
+    timestamp: str
     score: ScoreModel
     minute: str
-    state: str                  # LIVE, HT, FT, etc.
+    state: str
     events: list[MatchEvent] = Field(default_factory=list)
     ai_context: str = Field(..., max_length=200, description="One-sentence narrative for UI")
     model_confidence: ConfidenceModel
@@ -173,6 +170,15 @@ class ParsedMatchState(BaseModel):
     parse_latency_ms: float
     hallucination_flags: list[str] = Field(default_factory=list)
     raw_text_length: int = 0
+
+    # Convenience properties for pipeline.py
+    @property
+    def score_home(self) -> int:
+        return self.score.home
+
+    @property
+    def score_away(self) -> int:
+        return self.score.away
 
 
 # ─────────────────────────────────────────────
@@ -187,8 +193,8 @@ def _get_groq_clients() -> tuple[AsyncGroq, AsyncGroq]:
     return AsyncGroq(api_key=key1), AsyncGroq(api_key=key2)
 
 
-GROQ_MODEL_FAST = "llama-3.1-8b-instant"    # speed-critical live parsing
-GROQ_MODEL_SMART = "llama-3.3-70b-versatile" # fallback when 8b schema fails
+GROQ_MODEL_FAST = "llama-3.1-8b-instant"
+GROQ_MODEL_SMART = "llama-3.3-70b-versatile"
 
 SYSTEM_PROMPT = """You are a football match data extraction AI for a research project.
 Extract structured match data from live commentary text and return ONLY valid JSON.
@@ -260,13 +266,9 @@ Return this exact JSON structure (no other text):
 def cross_reference_texts(texts: list[str]) -> str:
     """
     When 3+ sources available, combine them for more reliable input to Groq.
-    Prioritise consistent facts, flag contradictions for Groq to resolve.
     """
     if len(texts) == 1:
         return texts[0]
-
-    # Simple approach: concatenate with source separators
-    # Groq will naturally weight consistent information
     combined = "\n\n---\n\n".join([
         f"SOURCE {i+1}:\n{text[:2000]}"
         for i, text in enumerate(texts[:3])
@@ -282,12 +284,12 @@ async def parse_match_state(
     match_id: str,
     home_team: str,
     away_team: str,
-    raw_texts: list[str],           # from 1-3 sources
+    raw_texts: list[str],
     source_names: list[str],
     current_score: dict,
     current_minute: str,
     match_state: str,
-    match_index: int = 0,           # 0-2 use key 1, 3-5 use key 2
+    match_index: int = 0,
     last_good_state: Optional[dict] = None,
 ) -> Optional[ParsedMatchState]:
     """
@@ -296,13 +298,12 @@ async def parse_match_state(
     """
     start = time.time()
 
-    # Cross-reference if multiple sources
     combined_text = cross_reference_texts(raw_texts)
     source_used = ", ".join(source_names[:3])
 
     client_1, client_2 = _get_groq_clients()
-    clients_8b = [client_1 if match_index < 3 else client_2]  # key split by match
-    clients_fallback = [client_2 if match_index < 3 else client_1, client_1]  # other key then retry
+    clients_8b = [client_1 if match_index < 3 else client_2]
+    clients_fallback = [client_2 if match_index < 3 else client_1, client_1]
 
     prompt = _build_extraction_prompt(
         match_id, home_team, away_team,
@@ -310,7 +311,6 @@ async def parse_match_state(
         combined_text,
     )
 
-    # Attempt 1: Groq 8b (fast)
     result = await _try_groq(
         client=clients_8b[0],
         model=GROQ_MODEL_FAST,
@@ -319,7 +319,6 @@ async def parse_match_state(
         attempt_label="8b-primary",
     )
 
-    # Attempt 2: Other 8b key
     if result is None:
         logger.warning(f"[Parser] {match_id}: 8b primary failed — trying 8b secondary key")
         result = await _try_groq(
@@ -330,7 +329,6 @@ async def parse_match_state(
             attempt_label="8b-secondary",
         )
 
-    # Attempt 3: 70b (intelligence fallback for schema failures)
     if result is None:
         logger.warning(f"[Parser] {match_id}: Both 8b keys failed — escalating to 70b")
         result = await _try_groq(
@@ -344,14 +342,12 @@ async def parse_match_state(
     if result is None:
         logger.error(f"[Parser] {match_id}: All Groq attempts failed — serving last known good state")
         if last_good_state:
-            # Reconstruct from cached dict
             try:
                 return ParsedMatchState(**last_good_state)
             except Exception:
                 pass
         return None
 
-    # Validate with Pydantic
     validated = _validate_parsed(result, match_id, source_used)
     if validated is None:
         logger.error(f"[Parser] {match_id}: Validation failed — serving last known good state")
@@ -369,6 +365,48 @@ async def parse_match_state(
     return validated
 
 
+# ─────────────────────────────────────────────
+# PIPELINE INTERFACE — parse_commentary alias
+# ─────────────────────────────────────────────
+# pipeline.py calls: parse_commentary(match_id, home, away, raw_texts)
+# parse_match_state has more params — this wrapper fills in sensible defaults
+# from the pipeline's MatchRuntime context.
+
+async def parse_commentary(
+    match_id: str,
+    home: str,
+    away: str,
+    raw_texts: list[str],
+    source_names: Optional[list[str]] = None,
+    current_score: Optional[dict] = None,
+    current_minute: str = "0",
+    match_state: str = "LIVE",
+    match_index: int = 0,
+    last_good_state: Optional[dict] = None,
+) -> Optional[ParsedMatchState]:
+    """
+    Pipeline-facing alias for parse_match_state.
+    pipeline.py calls this with positional args: match_id, home, away, raw_texts.
+    All other args have sensible defaults.
+    """
+    return await parse_match_state(
+        match_id=match_id,
+        home_team=home,
+        away_team=away,
+        raw_texts=raw_texts,
+        source_names=source_names or ["unknown"],
+        current_score=current_score or {"home": 0, "away": 0},
+        current_minute=current_minute,
+        match_state=match_state,
+        match_index=match_index,
+        last_good_state=last_good_state,
+    )
+
+
+# ─────────────────────────────────────────────
+# GROQ INTERNALS
+# ─────────────────────────────────────────────
+
 async def _try_groq(
     client: AsyncGroq,
     model: str,
@@ -384,13 +422,12 @@ async def _try_groq(
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.1,        # low temperature = consistent JSON
+            temperature=0.1,
             max_tokens=1000,
             timeout=20,
         )
         text = response.choices[0].message.content.strip()
 
-        # Strip any accidental markdown code fences
         text = re.sub(r"^```(?:json)?\n?", "", text)
         text = re.sub(r"\n?```$", "", text)
 
@@ -411,17 +448,14 @@ def _validate_parsed(raw: dict, match_id: str, source_used: str) -> Optional[Par
     flags = []
 
     try:
-        # Ensure match_id matches
         raw["match_id"] = match_id
         raw["source_used"] = source_used
-        raw["parse_latency_ms"] = 0.0   # set by caller
+        raw["parse_latency_ms"] = 0.0
         raw["hallucination_flags"] = flags
 
-        # Timestamp: ensure valid UTC
         if "timestamp" not in raw or not raw["timestamp"]:
             raw["timestamp"] = datetime.utcnow().isoformat()
 
-        # Minute sanity
         minute_str = str(raw.get("minute", "0"))
         try:
             base_minute = int(re.match(r"(\d+)", minute_str).group(1))
@@ -431,7 +465,6 @@ def _validate_parsed(raw: dict, match_id: str, source_used: str) -> Optional[Par
         except Exception:
             raw["minute"] = "0"
 
-        # Validate events list
         events = raw.get("events", [])
         valid_events = []
         for ev in events:
@@ -443,7 +476,6 @@ def _validate_parsed(raw: dict, match_id: str, source_used: str) -> Optional[Par
                 logger.debug(f"[Parser] Event rejected: {ev} — {ve}")
         raw["events"] = valid_events
 
-        # Normalise confidence to sum to 1.0
         conf = raw.get("model_confidence", {})
         total = sum([
             conf.get("home_win", 0.33),
@@ -475,13 +507,9 @@ def _validate_parsed(raw: dict, match_id: str, source_used: str) -> Optional[Par
 async def generate_pre_match_brief(
     home_team: str,
     away_team: str,
-    news_summaries: list[dict],     # [{headline, source, url}, ...]
+    news_summaries: list[dict],
     model_prediction: dict,
 ) -> str:
-    """
-    Generate pre-match brief using Groq 70b.
-    Includes team news, form, key battles, AI prediction reasoning.
-    """
     client_1, _ = _get_groq_clients()
 
     news_text = "\n".join([
@@ -520,7 +548,6 @@ Keep it factual, analytical, and concise. No hype. Label all AI content clearly.
 
     if isinstance(result, str):
         return result
-    # If 70b returned JSON-like, extract text
     return str(result) if result else f"AI pre-match analysis unavailable for {home_team} vs {away_team}."
 
 
@@ -532,9 +559,6 @@ async def generate_post_match_debrief(
     actual_result: str,
     model_updates: list[str],
 ) -> str:
-    """
-    Generate post-match debrief: what model got right/wrong, what updated.
-    """
     client_1, _ = _get_groq_clients()
 
     was_correct = ai_prediction.get("predicted_winner") == actual_result
@@ -567,10 +591,6 @@ Label all AI analysis clearly. Be honest about failures."""
 
 
 async def summarise_news_article(url: str, title: str, source_name: str) -> str:
-    """
-    Summarise a single news article into one bullet point.
-    Used for pre-match team news section.
-    """
     client_1, _ = _get_groq_clients()
 
     prompt = f"""Summarise this football news in ONE bullet point (max 15 words, factual only):

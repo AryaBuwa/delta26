@@ -4,6 +4,8 @@ fetcher.py — Layer 1: Data Fetching
 18 sources split into 6 groups of 3.
 Each match assigned one group, rotating randomly each morning.
 Async parallel fetch with bot prevention, rate limiting, fallback chain.
+
+Session 8 patch: added SourceResult + fetch_match_data for pipeline.py interface.
 """
 
 import asyncio
@@ -226,6 +228,103 @@ class FetchResult:
     error: Optional[str] = None
     status_code: Optional[int] = None
     latency_ms: Optional[float] = None
+
+
+# ─────────────────────────────────────────────
+# PIPELINE INTERFACE — SourceResult + fetch_match_data
+# ─────────────────────────────────────────────
+# pipeline.py uses SourceResult (not FetchResult) and fetch_match_data
+# (not fetch_match_group). These thin wrappers bridge the two without
+# touching pipeline.py.
+
+@dataclass
+class SourceResult:
+    """
+    Pipeline-facing result shape. Wraps FetchResult with friendlier field names.
+    pipeline.py checks: r.ok, r.blocked, r.text, r.source, r.http_code, r.latency_ms
+    """
+    source: str
+    ok: bool
+    text: Optional[str]
+    blocked: bool
+    http_code: Optional[int]
+    latency_ms: Optional[float]
+
+    @classmethod
+    def from_fetch_result(cls, r: FetchResult) -> "SourceResult":
+        blocked = r.status_code in (403, 429) if r.status_code else False
+        return cls(
+            source=r.source_name,
+            ok=r.success and bool(r.raw_text),
+            text=r.raw_text,
+            blocked=blocked,
+            http_code=r.status_code,
+            latency_ms=r.latency_ms,
+        )
+
+
+async def fetch_match_data(
+    match_id: str,
+    home: str,
+    away: str,
+    sources: Optional[list] = None,  # accepted for API compat; group rotation controls actual sources
+) -> list[SourceResult]:
+    """
+    Pipeline-facing fetch entry point.
+    Runs fetch_match_group for this match and returns SourceResult list.
+    Handles Tavily and Linkup fallbacks automatically if < 3 valid sources.
+    """
+    match_context = {
+        "match_id": match_id,
+        "home": home,
+        "away": away,
+        # URL template keys populated from fixtures.py in production;
+        # fetcher falls back gracefully if specific keys are missing.
+    }
+
+    connector = aiohttp.TCPConnector(limit=10, limit_per_host=3, ttl_dns_cache=300, ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        group_result: GroupFetchResult = await fetch_match_group(
+            match_id=match_id,
+            match_context=match_context,
+            session=session,
+        )
+
+    # Convert FetchResult → SourceResult
+    source_results = [
+        SourceResult.from_fetch_result(r)
+        for r in group_result.all_results
+    ]
+
+    # Tavily fallback if < 3 valid sources
+    if group_result.needs_fallback:
+        logger.warning(
+            f"[Fetch] {match_id}: Only {len(group_result.valid_results)} valid source(s) — trying Tavily"
+        )
+        tavily_text = await tavily_fallback(match_id, home, away)
+        if tavily_text:
+            source_results.append(SourceResult(
+                source="Tavily",
+                ok=True,
+                text=tavily_text,
+                blocked=False,
+                http_code=200,
+                latency_ms=None,
+            ))
+        else:
+            # Linkup last resort
+            linkup_text = await linkup_fallback(match_id, home, away)
+            if linkup_text:
+                source_results.append(SourceResult(
+                    source="Linkup",
+                    ok=True,
+                    text=linkup_text,
+                    blocked=False,
+                    http_code=200,
+                    latency_ms=None,
+                ))
+
+    return source_results
 
 
 # ─────────────────────────────────────────────

@@ -2,6 +2,8 @@
 pipeline.py — Match Pipeline Orchestrator
 State machine + fetch intervals + alert triggers + scoring + SSE event emission.
 Coordinates fetcher.py, parser.py, model.py, alerts.py, sheets.py, fixtures.py.
+
+Session 8 patch: added PipelineOrchestrator class at bottom for main.py interface.
 """
 
 import asyncio
@@ -55,7 +57,6 @@ class MatchState(str, Enum):
     FINISHED    = "FINISHED"
     VOID        = "VOID"
 
-# Keywords that drive state transitions (all lowercase for matching)
 TRANSITION_KEYWORDS: dict[str, MatchState] = {
     "half time":             MatchState.HT,
     "half-time":             MatchState.HT,
@@ -82,22 +83,20 @@ TRANSITION_KEYWORDS: dict[str, MatchState] = {
     "suspended":             MatchState.VOID,
 }
 
-# Fetch intervals (seconds) per state and active match count
 def get_fetch_interval(state: MatchState, active_count: int) -> int:
     if state in (MatchState.HT, MatchState.ET_HT):
-        return 300  # 5 minutes
+        return 300
     if state == MatchState.SCHEDULED:
-        return 780  # 13 minutes (keep-alive)
+        return 780
     if state == MatchState.PENALTIES:
         return 30
     if state in (MatchState.FINISHED, MatchState.VOID):
-        return 9999  # stop fetching
-    # LIVE states — scale with active match count
+        return 9999
     if active_count == 1:
         return 15
     if active_count == 2:
         return 20
-    return 30  # 3+ matches
+    return 30
 
 
 # ─────────────────────────────────────────────
@@ -105,10 +104,6 @@ def get_fetch_interval(state: MatchState, active_count: int) -> int:
 # ─────────────────────────────────────────────
 
 class MatchRuntime:
-    """
-    All mutable state for one match.
-    Lives in memory; key facts persisted to Supabase via main.py.
-    """
     def __init__(self, match_id: str):
         f = FIXTURE_BY_ID[match_id]
         self.match_id         = match_id
@@ -119,26 +114,21 @@ class MatchRuntime:
         self.phase            = f["phase"]
         self.group            = f.get("group")
 
-        # State machine
         self.state            = MatchState.SCHEDULED
         self.prev_state       = None
 
-        # Score
         self.score_home       = 0
         self.score_away       = 0
         self.minute           = 0
 
-        # Prediction (set at SCHEDULED by model.py)
         self.prediction: Optional[ModelResult] = None
-        self.confidence_locked = False  # True after 85'
+        self.confidence_locked = False
         self.confidence_at_kickoff: Optional[dict] = None
 
-        # Events log
         self.events: list[dict] = []
         self.pre_match_brief  = ""
         self.post_match_debrief = ""
 
-        # Source tracking
         self.sources_used:    list[str] = []
         self.sources_failed:  list[str] = []
         self.fetch_cycles     = 0
@@ -146,21 +136,16 @@ class MatchRuntime:
         self.hallucinations_caught = 0
         self.fallbacks_triggered = 0
 
-        # Silence tracking
         self.last_commentary_at: Optional[datetime] = None
         self.ft_confirmed_at:    Optional[datetime] = None
 
-        # Down tracking
         self.all_sources_down_since: Optional[datetime] = None
 
-        # Penalty state
         self.penalty_round    = 0
         self.penalty_scores   = {"home": 0, "away": 0}
 
-        # Last known good state (served to users during outages)
         self.last_good_state: Optional[ParsedMatchState] = None
 
-        # Asyncio task for this match
         self.task: Optional[asyncio.Task] = None
 
     def state_label(self) -> str:
@@ -171,11 +156,8 @@ class MatchRuntime:
 # Active match registry
 # ─────────────────────────────────────────────
 
-_active: dict[str, MatchRuntime] = {}  # match_id → MatchRuntime
-
-# SSE broadcaster: populated by main.py
-# pipeline emits events here; main.py's SSE handler broadcasts
-_sse_queues: dict[str, list[asyncio.Queue]] = {}  # match_id → [client queues]
+_active: dict[str, MatchRuntime] = {}
+_sse_queues: dict[str, list[asyncio.Queue]] = {}
 
 
 def register_sse_queue(match_id: str, q: asyncio.Queue) -> None:
@@ -191,13 +173,12 @@ def unregister_sse_queue(match_id: str, q: asyncio.Queue) -> None:
 
 
 def _emit(match_id: str, event_type: str, data: dict) -> None:
-    """Push an SSE event to all connected clients for this match."""
     payload = {"type": event_type, "data": data, "ts": datetime.now(timezone.utc).isoformat()}
     for q in _sse_queues.get(match_id, []):
         try:
             q.put_nowait(payload)
         except asyncio.QueueFull:
-            pass  # slow client, skip
+            pass
 
 
 # ─────────────────────────────────────────────
@@ -209,30 +190,22 @@ def _detect_transition(
     parsed: ParsedMatchState,
     commentary_text: str,
 ) -> Optional[MatchState]:
-    """
-    Scan commentary for transition keywords.
-    Returns new state if transition found, else None.
-    Never auto-advances without commentary confirmation.
-    """
     text = commentary_text.lower()
 
     for keyword, target_state in TRANSITION_KEYWORDS.items():
         if keyword in text:
-            # Validate the transition makes sense from current state
             if _valid_transition(rt.state, target_state):
                 return target_state
 
-    # Silence rule: if commentary silent 4+ mins after FT confirmed
     if rt.state == MatchState.FT and rt.ft_confirmed_at:
         silence_secs = (datetime.now(timezone.utc) - rt.ft_confirmed_at).total_seconds()
-        if silence_secs > 20 * 60:  # 20 min total
+        if silence_secs > 20 * 60:
             return MatchState.FINISHED
 
     return None
 
 
 def _valid_transition(current: MatchState, target: MatchState) -> bool:
-    """Enforce valid state progressions."""
     valid_from: dict[MatchState, set[MatchState]] = {
         MatchState.SCHEDULED:   {MatchState.LIVE, MatchState.VOID},
         MatchState.LIVE:        {MatchState.HT, MatchState.FT, MatchState.VOID},
@@ -250,13 +223,11 @@ def _valid_transition(current: MatchState, target: MatchState) -> bool:
 
 
 async def _apply_transition(rt: MatchRuntime, new_state: MatchState) -> None:
-    """Apply a state transition and fire all side effects."""
     old_state = rt.state
     rt.prev_state = old_state
     rt.state = new_state
     logger.info(f"{rt.match_id}: {old_state} → {new_state}")
 
-    # Emit SSE state change
     _emit(rt.match_id, "state_change", {
         "match_id": rt.match_id,
         "state": new_state,
@@ -265,7 +236,6 @@ async def _apply_transition(rt: MatchRuntime, new_state: MatchState) -> None:
         "minute": rt.minute,
     })
 
-    # LIVE — record confidence at kickoff
     if new_state == MatchState.LIVE and old_state == MatchState.SCHEDULED:
         if rt.prediction:
             rt.confidence_at_kickoff = {
@@ -274,11 +244,9 @@ async def _apply_transition(rt: MatchRuntime, new_state: MatchState) -> None:
                 "away_win": rt.prediction.away_win,
             }
 
-    # FT — record timestamp for silence rule
     if new_state == MatchState.FT:
         rt.ft_confirmed_at = datetime.now(timezone.utc)
 
-    # VOID — lock everything immediately
     if new_state == MatchState.VOID:
         rt.confidence_locked = True
         _emit(rt.match_id, "void", {
@@ -294,7 +262,6 @@ async def _apply_transition(rt: MatchRuntime, new_state: MatchState) -> None:
             "recovered": False,
         })
 
-    # PENALTIES — open micro-vote
     if new_state == MatchState.PENALTIES:
         _emit(rt.match_id, "penalties_started", {
             "match_id": rt.match_id,
@@ -302,11 +269,9 @@ async def _apply_transition(rt: MatchRuntime, new_state: MatchState) -> None:
             "score_away": rt.score_away,
         })
 
-    # FINISHED — trigger post-match processing
     if new_state == MatchState.FINISHED:
         asyncio.create_task(_post_match(rt))
 
-    # ET states — suspend predictions
     if new_state in (MatchState.ET_1H, MatchState.ET_HT, MatchState.ET_2H):
         _emit(rt.match_id, "extra_time", {
             "match_id": rt.match_id,
@@ -319,15 +284,11 @@ async def _apply_transition(rt: MatchRuntime, new_state: MatchState) -> None:
 # ─────────────────────────────────────────────
 
 def _update_confidence(rt: MatchRuntime, parsed: ParsedMatchState) -> None:
-    """
-    Update live confidence based on current score + minute.
-    Locked at 85 minutes permanently.
-    """
     if rt.confidence_locked:
         return
     if rt.state not in (MatchState.LIVE, MatchState.LIVE_2H):
         return
-    if parsed.minute >= 85:
+    if parsed.minute and int(re.sub(r"\+.*", "", str(parsed.minute)) or "0") >= 85:
         rt.confidence_locked = True
         logger.info(f"{rt.match_id}: Confidence locked at 85'")
         _emit(rt.match_id, "confidence_locked", {"match_id": rt.match_id, "minute": 85})
@@ -336,12 +297,11 @@ def _update_confidence(rt: MatchRuntime, parsed: ParsedMatchState) -> None:
     if rt.prediction is None:
         return
 
-    # Score differential influences confidence
     goal_diff = (parsed.score_home - parsed.score_away)
-    minute = parsed.minute or rt.minute
-
-    # Historical comeback rates (simple heuristic — model handles full version)
-    comeback_pct = max(0.02, 0.15 - (minute / 90) * 0.12)
+    try:
+        minute = int(re.sub(r"\+.*", "", str(parsed.minute) or "0"))
+    except Exception:
+        minute = rt.minute
 
     if goal_diff > 0:
         home_win = min(0.98, rt.prediction.home_win + goal_diff * 0.18 * (minute / 90))
@@ -356,7 +316,6 @@ def _update_confidence(rt: MatchRuntime, parsed: ParsedMatchState) -> None:
         draw     = rt.prediction.draw
         away_win = rt.prediction.away_win
 
-    # Shift from kickoff
     ko = rt.confidence_at_kickoff or {}
     home_shift = home_win - ko.get("home_win", home_win)
 
@@ -379,11 +338,6 @@ async def _check_source_health(
     rt: MatchRuntime,
     results: list[SourceResult],
 ) -> int:
-    """
-    Analyse source results.
-    Triggers WARNING if 3+ failing, CRITICAL if all failing.
-    Returns count of valid sources.
-    """
     valid   = [r for r in results if r.ok]
     failed  = [r for r in results if not r.ok]
     blocked = [r for r in results if r.blocked]
@@ -391,7 +345,6 @@ async def _check_source_health(
     valid_count = len(valid)
     total = len(results)
 
-    # Per-source health logging to Sheets
     for r in results:
         sheets.save_source_health({
             "match_id": rt.match_id,
@@ -402,12 +355,10 @@ async def _check_source_health(
             "timestamp": datetime.now(timezone.utc),
         })
 
-    # Track for research data
     rt.sources_used.extend([r.source for r in valid])
     rt.sources_failed.extend([r.source for r in failed])
 
     if valid_count == 0:
-        # All sources failing → CRITICAL
         if rt.all_sources_down_since is None:
             rt.all_sources_down_since = datetime.now(timezone.utc)
             last_state = (
@@ -419,13 +370,11 @@ async def _check_source_health(
                 last_good_state=last_state,
                 down_since=rt.all_sources_down_since,
             )
-        # Trigger full group swap
         new_group = swap_group(rt.match_id)
         logger.warning(f"{rt.match_id}: All sources down, swapped to group {new_group}")
         rt.fallbacks_triggered += 1
 
     elif valid_count < 3:
-        # Under-threshold but not zero → WARNING
         failed_names = [r.source for r in failed]
         await alerts.alert_sources_failing(
             failing_count=len(failed),
@@ -435,13 +384,11 @@ async def _check_source_health(
         )
         rt.fallbacks_triggered += 1
     else:
-        # Sources healthy — clear CRITICAL if it was firing
         if rt.all_sources_down_since is not None:
             rt.all_sources_down_since = None
             await alerts.silence_critical("all_sources_down")
             alerts.clear_silence("all_sources_down")
 
-    # Handle blocked sources (swap individual source, not group)
     for r in blocked:
         logger.warning(f"{rt.match_id}: {r.source} blocked (HTTP {r.http_code})")
         sheets.save_error({
@@ -461,17 +408,15 @@ async def _check_source_health(
 # ─────────────────────────────────────────────
 
 _groq_token_counts: dict[str, int] = {"key1": 0, "key2": 0}
-_groq_daily_limit = 500_000  # per key
+_groq_daily_limit = 500_000
 _groq_warned: set[str] = set()
 
 
 def record_groq_usage(key_name: str, tokens_used: int) -> None:
-    """Called by parser.py after each Groq call."""
     _groq_token_counts[key_name] = _groq_token_counts.get(key_name, 0) + tokens_used
 
 
 async def check_groq_quotas() -> None:
-    """Check Groq usage and fire alerts if needed. Called each fetch cycle."""
     for key_name, used in _groq_token_counts.items():
         pct = (used / _groq_daily_limit) * 100
         if pct >= 100 and key_name not in _groq_warned:
@@ -486,7 +431,6 @@ async def check_groq_quotas() -> None:
 
 
 def reset_groq_counts() -> None:
-    """Reset at midnight UTC. Called by APScheduler in main.py."""
     _groq_token_counts.clear()
     _groq_warned.clear()
     logger.info("Groq daily token counts reset.")
@@ -496,11 +440,10 @@ def reset_groq_counts() -> None:
 # Core match loop
 # ─────────────────────────────────────────────
 
+import re  # needed for minute parsing in _update_confidence
+
+
 async def _match_loop(match_id: str) -> None:
-    """
-    Main loop for one match. Runs until FINISHED or VOID.
-    Fetches → parses → updates state → emits SSE.
-    """
     rt = _active[match_id]
     logger.info(f"Match loop started: {match_id} ({rt.home} vs {rt.away})")
 
@@ -515,12 +458,10 @@ async def _match_loop(match_id: str) -> None:
         interval = get_fetch_interval(rt.state, active_count)
 
         if rt.state == MatchState.SCHEDULED:
-            # Just keep-alive — no full fetch needed
             _emit(match_id, "heartbeat", {"match_id": match_id, "state": rt.state})
             await asyncio.sleep(interval)
             continue
 
-        # ── Fetch ─────────────────────────────────────────────────────
         sources = get_sources_for_match(match_id)
         fixture = get_match_info(match_id)
 
@@ -547,18 +488,15 @@ async def _match_loop(match_id: str) -> None:
 
         rt.fetch_cycles += 1
 
-        # ── Source health check ────────────────────────────────────────
         valid_count = await _check_source_health(rt, results)
         await check_groq_quotas()
 
         if valid_count == 0 and rt.last_good_state:
-            # Serve last known good state
             _emit(match_id, "updating", {"match_id": match_id})
             await asyncio.sleep(interval)
             continue
 
-        # ── Parse ──────────────────────────────────────────────────────
-        raw_texts = [r.text for r in results if r.ok]
+        raw_texts = [r.text for r in results if r.ok and r.text]
         if not raw_texts:
             await asyncio.sleep(interval)
             continue
@@ -584,7 +522,10 @@ async def _match_loop(match_id: str) -> None:
             await asyncio.sleep(interval)
             continue
 
-        # ── Hallucination guard ────────────────────────────────────────
+        if parsed is None:
+            await asyncio.sleep(interval)
+            continue
+
         if parsed.score_home > 15 or parsed.score_away > 15:
             rt.hallucinations_caught += 1
             logger.warning(f"{match_id}: Hallucination caught — score {parsed.score_home}-{parsed.score_away}")
@@ -599,53 +540,54 @@ async def _match_loop(match_id: str) -> None:
             await asyncio.sleep(interval)
             continue
 
-        if parsed.minute and parsed.minute > 130:
-            rt.hallucinations_caught += 1
-            logger.warning(f"{match_id}: Hallucination caught — minute {parsed.minute}")
-            await asyncio.sleep(interval)
-            continue
+        try:
+            minute_int = int(re.sub(r"\+.*", "", str(parsed.minute) or "0"))
+            if minute_int > 130:
+                rt.hallucinations_caught += 1
+                logger.warning(f"{match_id}: Hallucination caught — minute {parsed.minute}")
+                await asyncio.sleep(interval)
+                continue
+        except Exception:
+            pass
 
-        # ── Update last known good state ───────────────────────────────
         rt.last_good_state = parsed
         rt.last_commentary_at = datetime.now(timezone.utc)
 
-        # ── Update score and minute ────────────────────────────────────
         if parsed.score_home is not None:
             rt.score_home = parsed.score_home
         if parsed.score_away is not None:
             rt.score_away = parsed.score_away
         if parsed.minute:
-            rt.minute = parsed.minute
+            try:
+                rt.minute = int(re.sub(r"\+.*", "", str(parsed.minute)))
+            except Exception:
+                pass
 
-        # ── State transition detection ─────────────────────────────────
         commentary_combined = " ".join(raw_texts).lower()
         new_state = _detect_transition(rt, parsed, commentary_combined)
         if new_state and new_state != rt.state:
             await _apply_transition(rt, new_state)
 
-        # ── Confidence update ──────────────────────────────────────────
         _update_confidence(rt, parsed)
 
-        # ── Save new events ────────────────────────────────────────────
         for event in parsed.events:
-            if event not in rt.events:
-                rt.events.append(event)
+            event_dict = event if isinstance(event, dict) else event.model_dump()
+            if event_dict not in rt.events:
+                rt.events.append(event_dict)
                 _emit(match_id, "event", {
                     "match_id": match_id,
-                    "event": event,
+                    "event": event_dict,
                     "score_home": rt.score_home,
                     "score_away": rt.score_away,
                 })
-                # Archive key moments to commentary tab
-                if event.get("type") in ("goal", "red_card", "penalty"):
+                if event_dict.get("type") in ("goal", "red_card", "penalty"):
                     sheets.save_commentary({
                         "match_id": match_id,
                         "full_commentary_archive": [],
-                        "key_moments": [event],
+                        "key_moments": [event_dict],
                         "player_performance_ratings": {},
                     })
 
-        # ── Emit full match update ─────────────────────────────────────
         _emit(match_id, "match_update", {
             "match_id":     match_id,
             "state":        rt.state,
@@ -655,17 +597,16 @@ async def _match_loop(match_id: str) -> None:
             "home":         rt.home,
             "away":         rt.away,
             "ai_context":   getattr(parsed, "ai_context", ""),
-            "confidence":   {
+            "confidence": {
                 "home_win": getattr(rt.prediction, "home_win", None),
                 "draw":     getattr(rt.prediction, "draw", None),
                 "away_win": getattr(rt.prediction, "away_win", None),
                 "locked":   rt.confidence_locked,
             },
             "model_version": get_current_version(),
-            "source_used":  parsed.source_used if hasattr(parsed, "source_used") else "",
+            "source_used":  getattr(parsed, "source_used", ""),
         })
 
-        # ── Sleep for remaining interval ───────────────────────────────
         elapsed = time.monotonic() - loop_start
         sleep_for = max(0, interval - elapsed)
         await asyncio.sleep(sleep_for)
@@ -678,13 +619,8 @@ async def _match_loop(match_id: str) -> None:
 # ─────────────────────────────────────────────
 
 async def _pre_match(rt: MatchRuntime) -> None:
-    """
-    Run 3 hours before kickoff.
-    Generates AI brief, initial prediction, opens voting.
-    """
     logger.info(f"{rt.match_id}: Pre-match preparation starting.")
 
-    # Get initial prediction from model
     try:
         rt.prediction = await predict(
             match_id=rt.match_id,
@@ -702,14 +638,13 @@ async def _pre_match(rt: MatchRuntime) -> None:
             "recovered": False,
         })
 
-    # Emit pre-match data to frontend
     _emit(rt.match_id, "pre_match", {
         "match_id":    rt.match_id,
         "home":        rt.home,
         "away":        rt.away,
         "kickoff_utc": rt.kickoff_utc.isoformat(),
         "venue":       rt.venue,
-        "prediction":  {
+        "prediction": {
             "home_win": getattr(rt.prediction, "home_win", 0.33),
             "draw":     getattr(rt.prediction, "draw", 0.33),
             "away_win": getattr(rt.prediction, "away_win", 0.33),
@@ -728,13 +663,8 @@ async def _pre_match(rt: MatchRuntime) -> None:
 # ─────────────────────────────────────────────
 
 async def _post_match(rt: MatchRuntime) -> None:
-    """
-    Called when match reaches FINISHED state.
-    Scores predictions, retrains model, saves full record, generates debrief.
-    """
     logger.info(f"{rt.match_id}: Post-match processing starting.")
 
-    # ── Score prediction accuracy ──────────────────────────────────────
     winner = (
         rt.home if rt.score_home > rt.score_away else
         rt.away if rt.score_away > rt.score_home else "draw"
@@ -753,7 +683,6 @@ async def _post_match(rt: MatchRuntime) -> None:
             ai_predicted == "draw" and winner == "draw"
         )
 
-    # ── Confidence calibration error ──────────────────────────────────
     if rt.prediction and rt.confidence_at_kickoff:
         if winner == rt.home:
             actual = 1.0
@@ -768,7 +697,6 @@ async def _post_match(rt: MatchRuntime) -> None:
     else:
         calibration_error = 0.0
 
-    # ── Retrain model ──────────────────────────────────────────────────
     train_start = time.monotonic()
     accuracy_before = get_accuracy()
     deployed = False
@@ -786,11 +714,9 @@ async def _post_match(rt: MatchRuntime) -> None:
         mlflow_run_id = retrain_result.run_id
         feature_importances = retrain_result.feature_importances
 
-        # Alert if too slow
         if duration_s > 600:
             await alerts.alert_retrain_slow(duration_s, rt.match_id)
 
-        # Notify retrain result
         await alerts.alert_retrain_result(
             match_id=rt.match_id,
             version=get_current_version(),
@@ -802,7 +728,6 @@ async def _post_match(rt: MatchRuntime) -> None:
             duration_s=duration_s,
         )
 
-        # Save MLflow summary to Sheets
         sheets.save_model_run({
             "run_id":              mlflow_run_id,
             "match_id":            rt.match_id,
@@ -830,7 +755,6 @@ async def _post_match(rt: MatchRuntime) -> None:
             "recovered": False,
         })
 
-    # ── Build + save full match record ─────────────────────────────────
     match_record = sheets.build_match_record(
         match_id=rt.match_id,
         model_version=get_current_version(),
@@ -840,7 +764,7 @@ async def _post_match(rt: MatchRuntime) -> None:
         kickoff_utc=rt.kickoff_utc,
         home_team=rt.home,
         away_team=rt.away,
-        home_squad=[],  # populated from squads file in model.py
+        home_squad=[],
         away_squad=[],
         home_manager="",
         away_manager="",
@@ -874,14 +798,14 @@ async def _post_match(rt: MatchRuntime) -> None:
         total_duration_min=rt.minute,
         regulation_duration_min=min(rt.minute, 90),
         ai_correct_winner=ai_correct_winner,
-        ai_correct_scorer=False,  # scorer accuracy tracked separately
+        ai_correct_scorer=False,
         ai_confidence_at_lock=getattr(rt.prediction, "home_win", 0.0),
         confidence_calibration_error=calibration_error,
         pre_match_brief=rt.pre_match_brief,
         post_match_debrief=rt.post_match_debrief,
         what_model_got_wrong="",
         model_updates_after={},
-        total_votes=0,  # populated from DB by main.py
+        total_votes=0,
         verified_votes=0,
         vote_distribution={},
         crowd_correct_winner=crowd_correct_winner,
@@ -906,7 +830,6 @@ async def _post_match(rt: MatchRuntime) -> None:
     )
     sheets.save_match(match_record)
 
-    # ── Emit final result ──────────────────────────────────────────────
     _emit(rt.match_id, "finished", {
         "match_id":         rt.match_id,
         "score_home":       rt.score_home,
@@ -917,17 +840,14 @@ async def _post_match(rt: MatchRuntime) -> None:
         "post_match_debrief": rt.post_match_debrief,
     })
 
-    # ── Deploy window suggestion ───────────────────────────────────────
     safe, reason = safe_to_deploy()
     await alerts.alert_deploy_window(safe, reason)
 
-    # ── Generate + send daily post draft ──────────────────────────────
     linkedin, x_post = _generate_daily_post(rt, winner, ai_correct_winner)
     await alerts.alert_daily_post(linkedin, x_post)
 
     logger.info(f"{rt.match_id}: Post-match processing complete.")
 
-    # Remove from active
     _active.pop(rt.match_id, None)
 
 
@@ -940,7 +860,6 @@ def _generate_daily_post(
     winner: str,
     ai_correct: bool,
 ) -> tuple[str, str]:
-    """Generate LinkedIn + X post drafts for Telegram."""
     pred = rt.prediction
     home_pct  = f"{getattr(pred, 'home_win', 0)*100:.0f}%" if pred else "—"
     draw_pct  = f"{getattr(pred, 'draw', 0)*100:.0f}%"     if pred else "—"
@@ -953,12 +872,8 @@ def _generate_daily_post(
         f"AI predicted: {home_pct} · Draw {draw_pct} · {away_pct}\n"
         f"Result: {result_emoji} {'correct' if ai_correct else 'wrong'}\n"
         f"Why {'right' if ai_correct else 'wrong'}:\n"
-        f"→ [reason 1]\n"
-        f"→ [reason 2]\n"
-        f"→ [reason 3]\n"
-        f"What updated:\n"
-        f"→ [team] rating [+/-X]\n"
-        f"→ [player] scorer probability [+/-X%]\n"
+        f"→ [reason 1]\n→ [reason 2]\n→ [reason 3]\n"
+        f"What updated:\n→ [team] rating [+/-X]\n→ [player] scorer probability [+/-X%]\n"
         f"→ [what model now knows]\n"
         f"Model v{version} — trained on {rt.match_id[-3:]} matches.\n"
         f"#WorldCup2026 #AI #buildinpublic"
@@ -979,10 +894,6 @@ def _generate_daily_post(
 # ─────────────────────────────────────────────
 
 async def schedule_match(match_id: str) -> None:
-    """
-    Register a match for monitoring. Call when voting opens (3h before kickoff).
-    Creates MatchRuntime, starts pre-match prep, schedules the loop.
-    """
     if match_id in _active:
         logger.warning(f"{match_id}: Already active, skipping.")
         return
@@ -995,10 +906,8 @@ async def schedule_match(match_id: str) -> None:
     rt = MatchRuntime(match_id)
     _active[match_id] = rt
 
-    # Run pre-match setup
     await _pre_match(rt)
 
-    # Wait for kickoff, then start loop
     async def _wait_then_start():
         now = datetime.now(timezone.utc)
         wait = (rt.kickoff_utc - now).total_seconds()
@@ -1013,9 +922,6 @@ async def schedule_match(match_id: str) -> None:
 
 
 async def void_match(match_id: str) -> None:
-    """
-    Force-void a match (abandoned/postponed). Called from admin or state machine.
-    """
     rt = _active.get(match_id)
     if not rt:
         logger.warning(f"void_match: {match_id} not active.")
@@ -1026,10 +932,6 @@ async def void_match(match_id: str) -> None:
 
 
 async def reschedule_voided_match(match_id: str, new_kickoff_utc: str) -> None:
-    """
-    Treat a rescheduled void as a brand new match.
-    Clears old votes (handled in main.py), resets state.
-    """
     _active.pop(match_id, None)
     if match_id in FIXTURE_BY_ID:
         FIXTURE_BY_ID[match_id]["kickoff_utc"] = new_kickoff_utc
@@ -1038,10 +940,6 @@ async def reschedule_voided_match(match_id: str, new_kickoff_utc: str) -> None:
 
 
 async def trigger_retrain(match_id: str) -> dict:
-    """
-    Admin panel 'Retrain Model' button handler.
-    Returns result dict.
-    """
     try:
         accuracy_before = get_accuracy()
         retrain_result = await retrain(match_id=match_id)
@@ -1085,7 +983,6 @@ async def trigger_retrain(match_id: str) -> dict:
 
 
 def get_all_match_states() -> list[dict]:
-    """Return current state of all active matches. Used by admin dashboard."""
     return [
         {
             "match_id":     rt.match_id,
@@ -1105,7 +1002,6 @@ def get_all_match_states() -> list[dict]:
 
 
 def get_match_state(match_id: str) -> Optional[dict]:
-    """Return state for a specific match."""
     rt = _active.get(match_id)
     if not rt:
         return None
@@ -1117,7 +1013,7 @@ def get_match_state(match_id: str) -> Optional[dict]:
         "score_home":   rt.score_home,
         "score_away":   rt.score_away,
         "minute":       rt.minute,
-        "events":       rt.events[-20:],  # last 20 events
+        "events":       rt.events[-20:],
         "prediction": {
             "home_win": getattr(rt.prediction, "home_win", None),
             "draw":     getattr(rt.prediction, "draw", None),
@@ -1130,16 +1026,11 @@ def get_match_state(match_id: str) -> Optional[dict]:
 
 
 async def startup() -> None:
-    """
-    Called by main.py on app startup.
-    Loads fixtures state, assigns today's groups, starts Telegram poller.
-    """
     from fixtures import load_state
     load_state()
     await sheets.start_queue_worker()
     asyncio.create_task(alerts.poll_stop_commands())
 
-    # Assign source groups for today
     todays = get_todays_matches()
     if todays:
         ids = [f["match_id"] for f in todays]
@@ -1150,9 +1041,125 @@ async def startup() -> None:
 
 
 async def shutdown() -> None:
-    """Graceful shutdown — drain Sheets queue, cancel tasks."""
     for rt in list(_active.values()):
         if rt.task and not rt.task.done():
             rt.task.cancel()
     await sheets.stop_queue_worker()
     logger.info("Pipeline shutdown complete.")
+
+
+# ─────────────────────────────────────────────
+# PIPELINE ORCHESTRATOR — main.py interface
+# ─────────────────────────────────────────────
+# main.py does:
+#   app.state.pipeline = PipelineOrchestrator(broker=broker)
+#   await app.state.pipeline.start()
+#   await app.state.pipeline.stop()
+#   await app.state.pipeline.check_source_health()
+#   await app.state.pipeline.generate_pre_match_briefs()
+#   await app.state.pipeline.check_fixtures()
+#   app.state.pipeline.get_active_match_ids()   ← sync
+
+class PipelineOrchestrator:
+    """
+    Wraps module-level pipeline functions into the object interface main.py expects.
+    """
+
+    def __init__(self, broker=None):
+        self._broker = broker
+        self._running = False
+
+    async def start(self) -> None:
+        """Called at app startup."""
+        await startup()
+        self._running = True
+        logger.info("[Orchestrator] Pipeline started")
+
+    async def stop(self) -> None:
+        """Called at app shutdown."""
+        await shutdown()
+        self._running = False
+        logger.info("[Orchestrator] Pipeline stopped")
+
+    async def check_source_health(self) -> None:
+        """Called every 30 min by APScheduler."""
+        from fetcher import source_health
+        report = source_health.get_health_report()
+        blocked = [s for s in report if s["status"] == "blocked"]
+        failed  = [s for s in report if s["status"] == "failed"]
+
+        if len(blocked) + len(failed) >= 3:
+            await alerts.alert_sources_failing(
+                failing_count=len(blocked) + len(failed),
+                total=18,
+                match_info="Source health check",
+                failed_sources=[s["name"] for s in (blocked + failed)],
+            )
+
+        for s in report:
+            sheets.save_source_health({
+                "match_id": "HEALTH_CHECK",
+                "source_name": s["name"],
+                "status": s["status"],
+                "http_code": None,
+                "latency_ms": None,
+                "timestamp": datetime.now(timezone.utc),
+            })
+
+        logger.info(
+            f"[Orchestrator] Source health: "
+            f"{len([s for s in report if s['status'] == 'ok'])} ok / "
+            f"{len(blocked)} blocked / {len(failed)} failed"
+        )
+
+    async def generate_pre_match_briefs(self) -> None:
+        """Called every 15 min by APScheduler. Schedules matches kicking off in 2-3 hours."""
+        upcoming = get_upcoming_matches(hours_ahead=3)
+
+        for fixture in upcoming:
+            match_id = fixture.get("match_id")
+            if not match_id or match_id in _active:
+                continue
+
+            kickoff_str = fixture.get("kickoff_utc", "")
+            if not kickoff_str:
+                continue
+
+            try:
+                kickoff = datetime.fromisoformat(kickoff_str.replace("Z", "+00:00"))
+                hours_until = (kickoff - datetime.now(timezone.utc)).total_seconds() / 3600
+                if 2.5 <= hours_until <= 3.0:
+                    logger.info(f"[Orchestrator] Scheduling {match_id} — {hours_until:.1f}h to kickoff")
+                    asyncio.create_task(schedule_match(match_id))
+            except Exception as e:
+                logger.error(f"[Orchestrator] Failed to schedule {match_id}: {e}")
+
+    async def check_fixtures(self) -> None:
+        """Called every 2 hours by APScheduler. Cleans up stale VOID matches."""
+        try:
+            todays = get_todays_matches()
+            logger.info(f"[Orchestrator] Fixture check: {len(todays)} matches today")
+
+            stale = [
+                mid for mid, rt in _active.items()
+                if rt.state == MatchState.VOID
+                and rt.ft_confirmed_at
+                and (datetime.now(timezone.utc) - rt.ft_confirmed_at).total_seconds() > 1800
+            ]
+            for mid in stale:
+                _active.pop(mid, None)
+                logger.info(f"[Orchestrator] Cleaned up stale VOID match {mid}")
+        except Exception as e:
+            logger.error(f"[Orchestrator] Fixture check failed: {e}")
+
+    def get_active_match_ids(self) -> list[str]:
+        """Sync method — returns currently active match IDs."""
+        return list(_active.keys())
+
+    def get_status(self) -> dict:
+        """Returns pipeline status for admin dashboard."""
+        return {
+            "running": self._running,
+            "active_matches": len(_active),
+            "match_states": get_all_match_states(),
+        }

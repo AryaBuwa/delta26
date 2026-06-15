@@ -643,7 +643,16 @@ async def submit_vote(request: Request, vote_req: VoteRequest, db: Session = Dep
 
     if match.state in ("FT", "ET_2H", "PENALTIES", "FINISHED", "VOID"):
         raise HTTPException(status_code=400, detail="Voting is closed for this match")
-
+    
+    # 24-hour pre-match lock
+    now_utc = datetime.now(timezone.utc)
+    kickoff = match.kickoff_utc
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=timezone.utc)
+    hours_until_kickoff = (kickoff - now_utc).total_seconds() / 3600
+    if hours_until_kickoff > 24:
+        raise HTTPException(status_code=400, detail="Voting opens 24 hours before kickoff")
+    
     try:
         current_minute = int(match.minute.replace("+", ""))
     except (ValueError, AttributeError):
