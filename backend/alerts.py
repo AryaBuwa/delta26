@@ -41,7 +41,7 @@ _silenced_keys: set[str] = set()                 # keys where user replied STOP
 def _get_bot() -> Bot:
     global _bot
     if _bot is None:
-        _bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+        _bot = Bot(token=TELEGRAM_BOT_TOKEN)
     return _bot
 
 
@@ -54,7 +54,7 @@ async def _send(text: str) -> bool:
     try:
         bot = _get_bot()
         await bot.send_message(
-            chat_id=settings.TELEGRAM_CHAT_ID,
+            chat_id=TELEGRAM_CHAT_ID,
             text=text,
             parse_mode="HTML",
         )
