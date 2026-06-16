@@ -350,8 +350,17 @@ class AddMatchRequest(BaseModel):
     phase: Optional[str] = "group"
 
 
+class UpdateScoreRequest(BaseModel):
+    match_id: str
+    home_score: int
+    away_score: int
+
+
 # ─────────────────────────────────────────────
 # TRUST SCORE
+# Fixed: real humans on mobile were scoring ~0.54 → EXCLUDED
+# Fix: recaptcha default 0.9, time threshold 5s not 30s,
+#      mobile tap gets partial credit, first-time voter gets full burst credit
 # ─────────────────────────────────────────────
 
 async def calculate_trust_score(
@@ -364,13 +373,23 @@ async def calculate_trust_score(
     match_id: str,
 ) -> float:
     score = 0.0
+
+    # reCAPTCHA (35%) — strongest signal
     score += min(recaptcha_score, 1.0) * 0.35
-    if time_on_page_ms >= 30_000:
+
+    # Time on page (20%) — bots submit instantly, humans take seconds
+    if time_on_page_ms >= 5_000:
         score += 0.20
-    elif time_on_page_ms >= 10_000:
+    elif time_on_page_ms >= 1_000:
         score += 0.10
+
+    # Human interaction (15%) — mouse on desktop, time-spent on mobile
     if mouse_moved:
         score += 0.15
+    elif time_on_page_ms >= 2_000:
+        score += 0.08  # mobile tap voter
+
+    # Burst detection (15%) — first vote this minute = not a bot
     one_minute_ago = datetime.now(timezone.utc).timestamp() - 60
     recent_votes = (
         db.query(VoteDB)
@@ -380,10 +399,14 @@ async def calculate_trust_score(
         )
         .count()
     )
-    if recent_votes < 3:
+    if recent_votes == 0:
         score += 0.15
+    elif recent_votes < 3:
+        score += 0.10
     elif recent_votes < 10:
         score += 0.05
+
+    # Unique fingerprint (10%)
     existing = (
         db.query(VoteDB)
         .filter(VoteDB.fingerprint_hash == fingerprint_hash, VoteDB.match_id == match_id)
@@ -391,7 +414,12 @@ async def calculate_trust_score(
     )
     if not existing:
         score += 0.10
+    else:
+        score += 0.05  # changing vote = still human
+
+    # Honeypot (5%) — always passes for legitimate frontend
     score += 0.05
+
     return min(score, 1.0)
 
 
@@ -408,8 +436,10 @@ async def verify_turnstile(token: str) -> bool:
 
 
 async def verify_recaptcha(token: str) -> float:
+    # FIX: was 0.7 — now 0.9 when no key set (trust mode)
+    # 0.9 × 0.35 = 0.315 contribution vs old 0.245
     if not RECAPTCHA_SECRET or not token:
-        return 0.7
+        return 0.9
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -557,7 +587,6 @@ async def health_detailed(db: Session = Depends(get_db)):
 async def get_matches(request: Request, db: Session = Depends(get_db)):
     matches = db.query(MatchDB).order_by(MatchDB.kickoff_utc).all()
 
-    # Group by UTC date
     days: dict[str, list] = {}
     for m in matches:
         date_key = m.kickoff_utc.strftime("%Y-%m-%d") if m.kickoff_utc else "unknown"
@@ -597,7 +626,7 @@ async def get_match(match_id: str, request: Request, db: Session = Depends(get_d
         .order_by(LiveEventDB.id.asc())
         .all()
     )
-    result = _match_to_dict(match)
+    result = _match_to_dict(match, include_debrief=True)
     if prediction:
         result["ai_prediction"] = _prediction_to_dict(prediction)
     result["live_events"] = [_event_to_dict(e) for e in events]
@@ -643,10 +672,11 @@ async def submit_vote(request: Request, vote_req: VoteRequest, db: Session = Dep
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
 
-    if match.state in ("FT", "ET_2H", "PENALTIES", "FINISHED", "VOID"):
+    # Lock voting for finished matches
+    if match.state in ("FT", "ET_2H", "FINISHED", "VOID"):
         raise HTTPException(status_code=400, detail="Voting is closed for this match")
-    
-    # 24-hour pre-match lock
+
+    # 24-hour pre-match window
     now_utc = datetime.now(timezone.utc)
     kickoff = match.kickoff_utc
     if kickoff.tzinfo is None:
@@ -654,9 +684,9 @@ async def submit_vote(request: Request, vote_req: VoteRequest, db: Session = Dep
     hours_until_kickoff = (kickoff - now_utc).total_seconds() / 3600
     if hours_until_kickoff > 24:
         raise HTTPException(status_code=400, detail="Voting opens 24 hours before kickoff")
-    
+
     try:
-        current_minute = int(match.minute.replace("+", ""))
+        current_minute = int(str(match.minute).replace("+", "").split("+")[0])
     except (ValueError, AttributeError):
         current_minute = 0
 
@@ -689,10 +719,6 @@ async def submit_vote(request: Request, vote_req: VoteRequest, db: Session = Dep
         .first()
     )
 
-    now_utc = datetime.now(timezone.utc)
-    kickoff = match.kickoff_utc
-    if kickoff.tzinfo is None:
-        kickoff = kickoff.replace(tzinfo=timezone.utc)
     minutes_before_ko = max(0, int((kickoff - now_utc).total_seconds() / 60))
     current_ai_confidence = match.model_confidence or {}
 
@@ -831,7 +857,7 @@ async def admin_login(request: Request, body: AdminLoginRequest):
 
 
 # ─────────────────────────────────────────────
-# ADMIN ROUTES — frontend calls with raw password as Bearer token
+# ADMIN ROUTES
 # ─────────────────────────────────────────────
 
 @app.get("/admin/status")
@@ -923,41 +949,68 @@ async def admin_drafts(request: Request, db: Session = Depends(get_db)):
     check_admin_password(request)
     finished = db.query(MatchDB).filter(
         MatchDB.state.in_(["FINISHED", "FT"])
-    ).order_by(MatchDB.last_updated.desc()).limit(5).all()
+    ).order_by(MatchDB.kickoff_utc.desc()).limit(5).all()
 
     drafts = []
     for match in finished:
+        # Get prediction if available — not required
         prediction = (
             db.query(PredictionDB)
             .filter(PredictionDB.match_id == match.id)
             .order_by(PredictionDB.id.desc())
             .first()
         )
-        if not prediction:
-            continue
 
+        # Determine result
         if match.home_score > match.away_score:
-            ai_correct = (prediction.home_win or 0) == max(prediction.home_win or 0, prediction.draw or 0, prediction.away_win or 0)
+            winner = match.home_team
+            result_line = f"{match.home_team} won"
         elif match.away_score > match.home_score:
-            ai_correct = (prediction.away_win or 0) == max(prediction.home_win or 0, prediction.draw or 0, prediction.away_win or 0)
+            winner = match.away_team
+            result_line = f"{match.away_team} won"
         else:
-            ai_correct = (prediction.draw or 0) == max(prediction.home_win or 0, prediction.draw or 0, prediction.away_win or 0)
+            winner = "draw"
+            result_line = "Draw"
 
-        result_emoji = "✅" if ai_correct else "❌"
+        # AI prediction line — show v0/no data honestly if no prediction
+        if prediction:
+            home_pct = round((prediction.home_win or 0) * 100)
+            draw_pct = round((prediction.draw or 0) * 100)
+            away_pct = round((prediction.away_win or 0) * 100)
+            probs = {
+                "home": prediction.home_win or 0,
+                "draw": prediction.draw or 0,
+                "away": prediction.away_win or 0,
+            }
+            ai_pick = max(probs, key=probs.get)
+            ai_correct = (
+                (ai_pick == "home" and match.home_score > match.away_score) or
+                (ai_pick == "away" and match.away_score > match.home_score) or
+                (ai_pick == "draw" and match.home_score == match.away_score)
+            )
+            result_emoji = "✅" if ai_correct else "❌"
+            pred_line = f"AI predicted: {match.home_team} {home_pct}% · Draw {draw_pct}% · {match.away_team} {away_pct}%"
+            model_line = f"Model v{prediction.model_version} — trained on {prediction.training_matches_seen} matches."
+        else:
+            result_emoji = "📊"
+            pred_line = "AI prediction: Not available (model at v0 — pre-training period)"
+            model_line = "Model v0 — training begins from Match 17 onwards."
+
+        debrief = match.post_match_debrief or "Post-match analysis pending."
 
         linkedin = f"""Match: {match.home_team} {match.home_score}–{match.away_score} {match.away_team}
-AI predicted: {match.home_team} {round((prediction.home_win or 0) * 100)}% · Draw {round((prediction.draw or 0) * 100)}% · {match.away_team} {round((prediction.away_win or 0) * 100)}%
-Result: {result_emoji} {"correct" if ai_correct else "wrong"}
+{pred_line}
+Result: {result_emoji} {result_line}
 
-{match.post_match_debrief or "Post-match analysis pending."}
+{debrief}
 
-Model v{prediction.model_version} — trained on {prediction.training_matches_seen} matches.
+{model_line}
 #WorldCup2026 #AI #buildinpublic #MachineLearning"""
 
-        x_post = f"""{match.home_team} {match.home_score}–{match.away_score} {match.away_team}
-AI: {match.home_team} {round((prediction.home_win or 0) * 100)}% · Draw {round((prediction.draw or 0) * 100)}% · {match.away_team} {round((prediction.away_win or 0) * 100)}%
-Result: {result_emoji}
-Model v{prediction.model_version} | {prediction.training_matches_seen} matches
+        x_post = f"""{match.home_team} {match.home_score}–{match.away_score} {match.away_team} {result_emoji}
+{pred_line}
+{model_line}
+delta26.vercel.app
 #WorldCup2026 #AI"""
 
         drafts.append({"platform": "linkedin", "match_id": match.id, "content": linkedin})
@@ -973,10 +1026,13 @@ async def admin_retrain_simple(request: Request, background_tasks: BackgroundTas
 
     async def run_retrain():
         try:
-            from model import DeltaModel
-            model = DeltaModel()
-            result = await asyncio.get_event_loop().run_in_executor(None, model.retrain)
-            await broker.publish_global("retrain_complete", result)
+            # Fixed: was calling DeltaModel() which doesn't exist
+            from model import retrain
+            result = await retrain()
+            await broker.publish_global("retrain_complete", {
+                "accuracy_after": result.accuracy_after,
+                "run_id": result.run_id,
+            })
         except Exception as e:
             logger.error(f"Retrain failed: {e}")
             await broker.publish_global("retrain_failed", {"error": str(e)})
@@ -992,9 +1048,8 @@ async def admin_sync_sheets_simple(request: Request, background_tasks: Backgroun
 
     async def run_sync():
         try:
-            from sheets import SheetsWriter
-            writer = SheetsWriter()
-            await writer.sync_all_pending()
+            from sheets import flush_queue
+            await flush_queue()
         except Exception as e:
             logger.error(f"Sheets sync failed: {e}")
 
@@ -1003,7 +1058,7 @@ async def admin_sync_sheets_simple(request: Request, background_tasks: Backgroun
 
 
 # ─────────────────────────────────────────────
-# ADMIN — ADD MATCH / UPDATE SCORE
+# ADMIN — ADD MATCH / UPDATE SCORE / OVERRIDE STATE
 # ─────────────────────────────────────────────
 
 @app.post("/admin/matches/add")
@@ -1034,20 +1089,6 @@ async def admin_add_match(request: Request, body: AddMatchRequest, db: Session =
     logger.info(f"Match added: {body.match_id} — {body.home_team} vs {body.away_team}")
     return {"status": "created", "match_id": body.match_id}
 
-class AddMatchRequest(BaseModel):
-    match_id: str
-    home_team: str
-    away_team: str
-    kickoff_utc: str
-    venue: Optional[str] = None
-    group: Optional[str] = None
-    phase: Optional[str] = "group"
-
-class UpdateScoreRequest(BaseModel):
-    match_id: str
-    home_score: int
-    away_score: int
-
 
 @app.post("/admin/matches/update-score")
 @limiter.limit("60/minute")
@@ -1060,12 +1101,8 @@ async def admin_update_score(request: Request, body: UpdateScoreRequest, db: Ses
     match.away_score = body.away_score
     match.last_updated = datetime.now(timezone.utc)
     db.commit()
-    logger.info(f"Score updated: {body.match_id} — {body.home_score}-{body.away_score}")
     return {"success": True, "match_id": body.match_id, "score": f"{body.home_score}-{body.away_score}"}
 
-# ─────────────────────────────────────────────
-# EXISTING ADMIN ENDPOINTS (token-based)
-# ─────────────────────────────────────────────
 
 @app.get("/api/admin/dashboard")
 @limiter.limit("60/minute")
@@ -1133,11 +1170,7 @@ async def internal_publish(request: Request, body: dict):
 # SERIALISATION HELPERS
 # ─────────────────────────────────────────────
 
-def _match_to_dict(match: MatchDB, admin: bool = False) -> dict:
-    """
-    Returns match dict shaped to match the frontend Match TypeScript interface.
-    home/away are Team objects: { name, code, fifa_rank }
-    """
+def _match_to_dict(match: MatchDB, admin: bool = False, include_debrief: bool = False) -> dict:
     d = {
         "match_id": match.id,
         "home": {
@@ -1165,13 +1198,13 @@ def _match_to_dict(match: MatchDB, admin: bool = False) -> dict:
         "source_used": match.source_used,
         "last_updated": match.last_updated.isoformat() if match.last_updated else None,
         "pre_match_brief": match.pre_match_brief,
+        # Always include debrief — frontend shows it on match detail page
+        "post_match_debrief": match.post_match_debrief,
         "went_to_et": match.went_to_et,
         "went_to_penalties": match.went_to_penalties,
     }
     if match.went_to_penalties:
         d["penalties"] = {"home": match.penalty_home, "away": match.penalty_away}
-    if admin:
-        d["post_match_debrief"] = match.post_match_debrief
     return d
 
 
