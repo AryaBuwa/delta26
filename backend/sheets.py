@@ -47,7 +47,7 @@ _queue_task: Optional[asyncio.Task] = None
 def _get_client() -> gspread.Client:
     global _client
     if _client is None:
-        creds_path = Path(settings.GOOGLE_SHEETS_CREDENTIALS)
+        creds_path = Path(GOOGLE_SHEETS_CREDENTIALS)
         creds = Credentials.from_service_account_file(str(creds_path), scopes=SCOPES)
         _client = gspread.authorize(creds)
     return _client
@@ -57,7 +57,7 @@ def _get_spreadsheet() -> gspread.Spreadsheet:
     global _spreadsheet
     if _spreadsheet is None:
         client = _get_client()
-        _spreadsheet = client.open_by_key(settings.GOOGLE_SHEETS_ID)
+        _spreadsheet = client.open_by_key(GOOGLE_SHEETS_ID)
     return _spreadsheet
 
 
