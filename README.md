@@ -83,8 +83,8 @@ delta/
 | Backend API | ✅ Live |
 | Frontend | ✅ Deployed |
 | Database | ✅ Connected |
-| Match cards | 🔄 In progress |
-| Live data pipeline | 🔄 In progress |
+| Match cards | ✅ In progress |
+| Live data pipeline | ✅ Connected |
 | ML model | 🔄 In progress |
 | Voting system | 🔄 In progress |
 
