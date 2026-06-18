@@ -4,9 +4,6 @@ model.py — Layer 3: Prediction Model
 Ensemble: Dixon-Coles (statistical) + Monte Carlo (10k simulations) + XGBoost (contextual).
 Retrains after every match. MLflow tracks every experiment. DVC versions every model file.
 Hard rules: only produces football prediction output. No off-topic generation.
-
-Session 8 patch: added pipeline interface wrappers at bottom of file:
-  predict(), retrain(), get_current_version(), get_accuracy(), ModelResult, add_match_result()
 """
 
 import os
@@ -760,7 +757,6 @@ def format_confidence_display(prediction: EnsemblePrediction) -> dict:
 # ─────────────────────────────────────────────
 # pipeline.py calls: predict(), retrain(), get_current_version(), get_accuracy()
 # and accesses: ModelResult.home_win / .draw / .away_win / .confidence_range
-# These wrappers make model.py pipeline-compatible without changing pipeline.py.
 
 # ── In-memory model state ─────────────────────────────────────────────────────
 _dc_params: Optional[DixonColesParams] = None
