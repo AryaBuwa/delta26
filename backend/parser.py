@@ -5,8 +5,6 @@ Groq LLM extracts structured JSON from raw commentary text.
 Pydantic v2 validates schema. Player names checked against 1,104 squad list.
 Hallucination guard rejects impossible values.
 Failover: Groq 8b Key 1 → Key 2 → 70b → cached state.
-
-Session 8 patch: added parse_commentary alias for pipeline.py compatibility.
 """
 
 import os
@@ -20,6 +18,7 @@ from enum import Enum
 from groq import AsyncGroq
 from pydantic import BaseModel, Field, field_validator, model_validator
 from loguru import logger
+
 
 # ─────────────────────────────────────────────
 # SQUAD DATA (48 teams × 23 players = 1,104 names)
@@ -366,11 +365,10 @@ async def parse_match_state(
 
 
 # ─────────────────────────────────────────────
-# PIPELINE INTERFACE — parse_commentary alias
+# parse_commentary — pipeline.py interface
 # ─────────────────────────────────────────────
-# pipeline.py calls: parse_commentary(match_id, home, away, raw_texts)
-# parse_match_state has more params — this wrapper fills in sensible defaults
-# from the pipeline's MatchRuntime context.
+# pipeline.py calls: parse_commentary(match_id=, home=, away=, raw_texts=)
+# This fills in sensible defaults for the extra params parse_match_state needs.
 
 async def parse_commentary(
     match_id: str,
@@ -386,7 +384,7 @@ async def parse_commentary(
 ) -> Optional[ParsedMatchState]:
     """
     Pipeline-facing alias for parse_match_state.
-    pipeline.py calls this with positional args: match_id, home, away, raw_texts.
+    pipeline.py calls this with keyword args: match_id, home, away, raw_texts.
     All other args have sensible defaults.
     """
     return await parse_match_state(
