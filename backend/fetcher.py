@@ -4,8 +4,6 @@ fetcher.py — Layer 1: Data Fetching
 18 sources split into 6 groups of 3.
 Each match assigned one group, rotating randomly each morning.
 Async parallel fetch with bot prevention, rate limiting, fallback chain.
-
-Session 8 patch: added SourceResult + fetch_match_data for pipeline.py interface.
 """
 
 import asyncio
@@ -231,11 +229,9 @@ class FetchResult:
 
 
 # ─────────────────────────────────────────────
-# PIPELINE INTERFACE — SourceResult + fetch_match_data
+# SourceResult — pipeline.py interface
 # ─────────────────────────────────────────────
-# pipeline.py uses SourceResult (not FetchResult) and fetch_match_data
-# (not fetch_match_group). These thin wrappers bridge the two without
-# touching pipeline.py.
+# pipeline.py checks: r.ok, r.blocked, r.text, r.source, r.http_code, r.latency_ms
 
 @dataclass
 class SourceResult:
@@ -263,11 +259,15 @@ class SourceResult:
         )
 
 
+# ─────────────────────────────────────────────
+# fetch_match_data — pipeline.py entry point
+# ─────────────────────────────────────────────
+
 async def fetch_match_data(
     match_id: str,
     home: str,
     away: str,
-    sources: Optional[list] = None,  # accepted for API compat; group rotation controls actual sources
+    sources: Optional[list] = None,
 ) -> list[SourceResult]:
     """
     Pipeline-facing fetch entry point.
@@ -278,8 +278,6 @@ async def fetch_match_data(
         "match_id": match_id,
         "home": home,
         "away": away,
-        # URL template keys populated from fixtures.py in production;
-        # fetcher falls back gracefully if specific keys are missing.
     }
 
     connector = aiohttp.TCPConnector(limit=10, limit_per_host=3, ttl_dns_cache=300, ssl=False)
@@ -312,7 +310,6 @@ async def fetch_match_data(
                 latency_ms=None,
             ))
         else:
-            # Linkup last resort
             linkup_text = await linkup_fallback(match_id, home, away)
             if linkup_text:
                 source_results.append(SourceResult(
