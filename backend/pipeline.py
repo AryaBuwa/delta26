@@ -2,8 +2,6 @@
 pipeline.py — Match Pipeline Orchestrator
 State machine + fetch intervals + alert triggers + scoring + SSE event emission.
 Coordinates fetcher.py, parser.py, model.py, alerts.py, sheets.py, fixtures.py.
-
-Session 8 patch: added PipelineOrchestrator class at bottom for main.py interface.
 """
 
 import asyncio
@@ -1049,20 +1047,21 @@ async def shutdown() -> None:
 
 
 # ─────────────────────────────────────────────
-# PIPELINE ORCHESTRATOR — main.py interface
+# PipelineOrchestrator — main.py interface
 # ─────────────────────────────────────────────
-# main.py does:
-#   app.state.pipeline = PipelineOrchestrator(broker=broker)
-#   await app.state.pipeline.start()
-#   await app.state.pipeline.stop()
-#   await app.state.pipeline.check_source_health()
-#   await app.state.pipeline.generate_pre_match_briefs()
-#   await app.state.pipeline.check_fixtures()
-#   app.state.pipeline.get_active_match_ids()   ← sync
 
 class PipelineOrchestrator:
     """
     Wraps module-level pipeline functions into the object interface main.py expects.
+    main.py does:
+        app.state.pipeline = PipelineOrchestrator(broker=broker)
+        await app.state.pipeline.start()
+        await app.state.pipeline.stop()
+        await app.state.pipeline.check_source_health()
+        await app.state.pipeline.generate_pre_match_briefs()
+        await app.state.pipeline.check_fixtures()
+        app.state.pipeline.get_active_match_ids()   ← sync
+        app.state.pipeline.get_status()             ← sync
     """
 
     def __init__(self, broker=None):
@@ -1083,63 +1082,65 @@ class PipelineOrchestrator:
 
     async def check_source_health(self) -> None:
         """Called every 30 min by APScheduler."""
-        from fetcher import source_health
-        report = source_health.get_health_report()
-        blocked = [s for s in report if s["status"] == "blocked"]
-        failed  = [s for s in report if s["status"] == "failed"]
+        try:
+            from fetcher import source_health
+            report = source_health.get_health_report()
+            blocked = [s for s in report if s["status"] == "blocked"]
+            failed  = [s for s in report if s["status"] == "failed"]
 
-        if len(blocked) + len(failed) >= 3:
-            await alerts.alert_sources_failing(
-                failing_count=len(blocked) + len(failed),
-                total=18,
-                match_info="Source health check",
-                failed_sources=[s["name"] for s in (blocked + failed)],
+            if len(blocked) + len(failed) >= 3:
+                await alerts.alert_sources_failing(
+                    failing_count=len(blocked) + len(failed),
+                    total=18,
+                    match_info="Source health check",
+                    failed_sources=[s["name"] for s in (blocked + failed)],
+                )
+
+            for s in report:
+                sheets.save_source_health({
+                    "match_id": "HEALTH_CHECK",
+                    "source_name": s["name"],
+                    "status": s["status"],
+                    "http_code": None,
+                    "latency_ms": None,
+                    "timestamp": datetime.now(timezone.utc),
+                })
+
+            logger.info(
+                f"[Orchestrator] Source health: "
+                f"{len([s for s in report if s['status'] == 'ok'])} ok / "
+                f"{len(blocked)} blocked / {len(failed)} failed"
             )
-
-        for s in report:
-            sheets.save_source_health({
-                "match_id": "HEALTH_CHECK",
-                "source_name": s["name"],
-                "status": s["status"],
-                "http_code": None,
-                "latency_ms": None,
-                "timestamp": datetime.now(timezone.utc),
-            })
-
-        logger.info(
-            f"[Orchestrator] Source health: "
-            f"{len([s for s in report if s['status'] == 'ok'])} ok / "
-            f"{len(blocked)} blocked / {len(failed)} failed"
-        )
+        except Exception as e:
+            logger.error(f"[Orchestrator] check_source_health error: {e}")
 
     async def generate_pre_match_briefs(self) -> None:
         """Called every 15 min by APScheduler. Schedules matches kicking off in 2-3 hours."""
-        upcoming = get_upcoming_matches(hours_ahead=3)
-
-        for fixture in upcoming:
-            match_id = fixture.get("match_id")
-            if not match_id or match_id in _active:
-                continue
-
-            kickoff_str = fixture.get("kickoff_utc", "")
-            if not kickoff_str:
-                continue
-
-            try:
-                kickoff = datetime.fromisoformat(kickoff_str.replace("Z", "+00:00"))
-                hours_until = (kickoff - datetime.now(timezone.utc)).total_seconds() / 3600
-                if 2.5 <= hours_until <= 3.0:
-                    logger.info(f"[Orchestrator] Scheduling {match_id} — {hours_until:.1f}h to kickoff")
-                    asyncio.create_task(schedule_match(match_id))
-            except Exception as e:
-                logger.error(f"[Orchestrator] Failed to schedule {match_id}: {e}")
+        try:
+            upcoming = get_upcoming_matches(hours_ahead=3)
+            for fixture in upcoming:
+                match_id = fixture.get("match_id")
+                if not match_id or match_id in _active:
+                    continue
+                kickoff_str = fixture.get("kickoff_utc", "")
+                if not kickoff_str:
+                    continue
+                try:
+                    kickoff = datetime.fromisoformat(kickoff_str.replace("Z", "+00:00"))
+                    hours_until = (kickoff - datetime.now(timezone.utc)).total_seconds() / 3600
+                    if 2.5 <= hours_until <= 3.0:
+                        logger.info(f"[Orchestrator] Scheduling {match_id} — {hours_until:.1f}h to kickoff")
+                        asyncio.create_task(schedule_match(match_id))
+                except Exception as e:
+                    logger.error(f"[Orchestrator] Failed to schedule {match_id}: {e}")
+        except Exception as e:
+            logger.error(f"[Orchestrator] generate_pre_match_briefs error: {e}")
 
     async def check_fixtures(self) -> None:
         """Called every 2 hours by APScheduler. Cleans up stale VOID matches."""
         try:
             todays = get_todays_matches()
             logger.info(f"[Orchestrator] Fixture check: {len(todays)} matches today")
-
             stale = [
                 mid for mid, rt in _active.items()
                 if rt.state == MatchState.VOID
