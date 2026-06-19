@@ -1094,15 +1094,17 @@ async def admin_add_match(request: Request, body: AddMatchRequest, db: Session =
 @limiter.limit("60/minute")
 async def admin_update_score(request: Request, body: UpdateScoreRequest, db: Session = Depends(get_db)):
     check_admin_password(request)
-    match = db.query(MatchDB).filter(MatchDB.id == body.match_id).first()
+    match = db.query(MatchDB).filter(MatchDB.match_id == body.match_id).first()
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
     match.home_score = body.home_score
     match.away_score = body.away_score
+    if hasattr(body, 'state') and body.state:
+        match.state = body.state
     match.last_updated = datetime.now(timezone.utc)
     db.commit()
+    db.refresh(match)
     return {"success": True, "match_id": body.match_id, "score": f"{body.home_score}-{body.away_score}"}
-
 
 @app.get("/api/admin/dashboard")
 @limiter.limit("60/minute")
