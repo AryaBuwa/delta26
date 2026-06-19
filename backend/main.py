@@ -354,6 +354,7 @@ class UpdateScoreRequest(BaseModel):
     match_id: str
     home_score: int
     away_score: int
+    state: str = "FINISHED"
 
 
 # ─────────────────────────────────────────────
