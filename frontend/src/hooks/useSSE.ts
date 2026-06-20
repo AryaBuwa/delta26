@@ -20,70 +20,49 @@ import type { SSEMessage, Match } from '@/types'
 // refs (useRef) rather than inline objects.
 
 export function useMatchSSE(matchId: string) {
-  const updateMatch = useMatchStore((s) => s.updateMatch)
-  const [connected, setConnected] = useState(false)
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
-  const connRef = useRef<{ close: () => void } | null>(null)
-  const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const retryCount = useRef(0)
-  // Stable ref to updateMatch — never changes, but avoids any closure staleness
-  const updateMatchRef = useRef(updateMatch)
-  useEffect(() => { updateMatchRef.current = updateMatch }, [updateMatch])
-
-  const handleMessage = useCallback((msg: SSEMessage) => {
-    if (msg.match_id !== matchId) return
-    setLastUpdate(new Date())
-
-    switch (msg.type) {
-      case 'match_update':
-      case 'prediction_update':
-      case 'vote_update':
-      case 'goal':
-      case 'state_change':
-      case 'penalty_update':
-        updateMatchRef.current(matchId, msg.data)
-        break
-      case 'heartbeat':
-        // connection alive — no state update needed
-        break
-      case 'error':
-        console.warn('[SSE] Server error:', msg)
-        break
-    }
-  }, [matchId]) // matchId is stable for a given page mount — safe dep
-
-  const connect = useCallback(() => {
-    if (!matchId) return
-    connRef.current?.close()
-
-    const conn = connectMatchSSE(
-      matchId,
-      (msg) => {
-        setConnected(true)
-        retryCount.current = 0
-        handleMessage(msg)
-      },
-      () => {
-        setConnected(false)
-        // Exponential backoff: 2s, 4s, 8s, 16s, max 30s
-        const delay = Math.min(30_000, 2_000 * Math.pow(2, retryCount.current))
-        retryCount.current += 1
-        retryRef.current = setTimeout(connect, delay)
-      }
-    )
-
-    connRef.current = conn
-  }, [matchId, handleMessage]) // handleMessage only changes when matchId changes
+  const { updateMatch } = useMatchStore();
+  const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    connect()
-    return () => {
-      connRef.current?.close()
-      if (retryRef.current) clearTimeout(retryRef.current)
-    }
-  }, [connect]) // connect only changes when matchId changes — no loop
+    if (!matchId) return;
 
-  return { connected, lastUpdate }
+    const connect = () => {
+      if (esRef.current) {
+        esRef.current.close();
+      }
+
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
+      const es = new EventSource(`${apiUrl}/stream/match/${matchId}`);
+      esRef.current = es;
+
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as SSEMessage;
+          if (data.match_id) {
+            updateMatch(data.match_id, data);
+          }
+        } catch (e) {
+          console.error('SSE parse error:', e);
+        }
+      };
+
+      es.onerror = () => {
+        es.close();
+        esRef.current = null;
+        // Reconnect after 5 seconds — ref prevents stale closure loop
+        reconnectTimeout.current = setTimeout(connect, 5000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current);
+      if (esRef.current) esRef.current.close();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId]); // ONLY matchId — no options object
 }
 
 
