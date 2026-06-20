@@ -1107,6 +1107,18 @@ async def admin_update_score(request: Request, body: UpdateScoreRequest, db: Ses
     db.refresh(match)
     return {"success": True, "match_id": body.match_id, "score": f"{body.home_score}-{body.away_score}"}
 
+@app.post("/admin/matches/update-teams")
+@limiter.limit("60/minute")
+async def admin_update_teams(request: Request, body: dict, db: Session = Depends(get_db)):
+    check_admin_password(request)
+    match = db.query(MatchDB).filter(MatchDB.id == body["match_id"]).first()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+    match.home_team = body["home_team"]
+    match.away_team = body["away_team"]
+    db.commit()
+    return {"success": True}
+
 @app.get("/api/admin/dashboard")
 @limiter.limit("60/minute")
 async def admin_dashboard(request: Request, db: Session = Depends(get_db), _: bool = Depends(get_admin)):
