@@ -1119,6 +1119,17 @@ async def admin_update_teams(request: Request, body: dict, db: Session = Depends
     db.commit()
     return {"success": True}
 
+@app.post("/admin/matches/update-debrief")
+@limiter.limit("60/minute")
+async def admin_update_debrief(request: Request, body: dict, db: Session = Depends(get_db)):
+    check_admin_password(request)
+    match = db.query(MatchDB).filter(MatchDB.id == body["match_id"]).first()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+    match.post_match_debrief = body.get("post_match_debrief", "")
+    db.commit()
+    return {"success": True}
+
 @app.get("/api/admin/dashboard")
 @limiter.limit("60/minute")
 async def admin_dashboard(request: Request, db: Session = Depends(get_db), _: bool = Depends(get_admin)):
