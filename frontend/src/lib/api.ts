@@ -9,8 +9,8 @@ import type {
   VoteResponse,
   VoteTotals,
   PenaltyVotePayload,
-  PreMatchBrief,
-  PostMatchDebrief,
+  PreMatchBriefData,
+  PostMatchDebriefData,
   SystemStatus,
   ModelStatus,
   ResearchStats,
@@ -54,16 +54,16 @@ export async function getMatch(id: string): Promise<Match> {
   } catch (err) { handleError(err) }
 }
 
-export async function getPreMatchBrief(matchId: string): Promise<PreMatchBrief> {
+export async function getPreMatchBrief(matchId: string): Promise<PreMatchBriefData> {
   try {
-    const { data } = await api.get<PreMatchBrief>(`/api/matches/${matchId}/brief`)
+    const { data } = await api.get<PreMatchBriefData>(`/api/matches/${matchId}/brief`)
     return data
   } catch (err) { handleError(err) }
 }
 
-export async function getPostMatchDebrief(matchId: string): Promise<PostMatchDebrief> {
+export async function getPostMatchDebrief(matchId: string): Promise<PostMatchDebriefData> {
   try {
-    const { data } = await api.get<PostMatchDebrief>(`/api/matches/${matchId}/debrief`)
+    const { data } = await api.get<PostMatchDebriefData>(`/api/matches/${matchId}/debrief`)
     return data
   } catch (err) { handleError(err) }
 }
