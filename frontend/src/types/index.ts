@@ -17,7 +17,7 @@ export interface Score { home: number; away: number }
 
 export interface Team {
   name: string
-  code: string       // 3-letter, e.g. "FRA"
+  code: string
   fifa_rank: number
 }
 
@@ -37,7 +37,7 @@ export interface Confidence {
 }
 
 export interface ConfidenceRange {
-  home_win: string   // e.g. "60–68%"
+  home_win: string
   draw: string
   away_win: string
 }
@@ -71,7 +71,7 @@ export interface LiveMatchData {
   events: MatchEvent[]
   ai_context: string
   model_confidence: Confidence
-  confidence_shift: string    // e.g. "Norway +33% since kickoff"
+  confidence_shift: string
   source_used: string
   parse_latency_ms: number
   model_version: number
@@ -109,14 +109,15 @@ export interface Match {
   score: Score
   minute: string
   events: MatchEvent[]
-  pre_match_brief?: string
+  pre_match_brief?: string | null        // ← plain string from API
+  post_match_debrief?: string | null     // ← plain string from API
   ai_prediction?: AIPrediction | null
   live?: LiveMatchData
 }
 
 // ── TOURNAMENT ────────────────────────────────────────────────────────────────
 export interface TournamentDay {
-  date: string        // "2026-06-11"
+  date: string
   matches: Match[]
 }
 
@@ -175,7 +176,7 @@ export interface TeamNewsItem {
   team: 'home' | 'away'
 }
 
-export interface PreMatchBrief {
+export interface PreMatchBriefData {
   match_id: string
   generated_at: string
   team_news: TeamNewsItem[]
@@ -192,7 +193,7 @@ export interface ModelUpdate {
   description: string
 }
 
-export interface PostMatchDebrief {
+export interface PostMatchDebriefData {
   match_id: string
   ai_correct_winner: boolean
   ai_correct_scorer: boolean
