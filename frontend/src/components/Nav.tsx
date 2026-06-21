@@ -52,7 +52,7 @@ export function Nav() {
             Credits
           </Link>
           <a
-            href="https://buymeacoffee.com"
+            href="https://tally.so/r/jag9PQ"
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -66,7 +66,7 @@ export function Nav() {
               borderRadius: 'var(--radius-sm)',
             }}
           >
-            ☕
+            Feedback/Bug Report
           </a>
         </div>
       </div>
