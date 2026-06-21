@@ -106,6 +106,34 @@ function AIConfidenceCard({ match }: { match: Match }) {
   )
 }
 
+// ── DEBRIEF CARD ──────────────────────────────────────────────────────────────
+
+function PostMatchDebriefCard({ text }: { text: string }) {
+  return (
+    <div className="card" style={{ padding: 20 }}>
+      <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
+        Post-Match Analysis · <span style={{ color: 'var(--accent)' }}>AI Generated</span>
+      </p>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+        {text}
+      </p>
+    </div>
+  )
+}
+
+function PreMatchBriefCard({ text }: { text: string }) {
+  return (
+    <div className="card" style={{ padding: 20 }}>
+      <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
+        Pre-Match Brief · <span style={{ color: 'var(--accent)' }}>AI Generated</span>
+      </p>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+        {text}
+      </p>
+    </div>
+  )
+}
+
 // ── SCHEDULED VIEW ────────────────────────────────────────────────────────────
 
 function ScheduledView({ match }: { match: Match }) {
@@ -120,6 +148,7 @@ function ScheduledView({ match }: { match: Match }) {
         </div>
       </div>
       <AIConfidenceCard match={match} />
+      {match.pre_match_brief && <PreMatchBriefCard text={match.pre_match_brief} />}
       <div className="card" style={{ padding: 20 }}>
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>
           Your Prediction
@@ -234,16 +263,8 @@ function FinishedView({ match }: { match: Match }) {
       <AIConfidenceCard match={match} />
       {match.events && match.events.length > 0 && <EventTicker events={match.events as MatchEvent[]} />}
       <CrowdCard match={match} closed />
-      {match.pre_match_brief && (
-        <div className="card" style={{ padding: 20 }}>
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12 }}>
-            Match Analysis · <span style={{ color: 'var(--accent)' }}>AI Generated</span>
-          </p>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
-            {match.pre_match_brief}
-          </p>
-        </div>
-      )}
+      {match.post_match_debrief && <PostMatchDebriefCard text={match.post_match_debrief} />}
+      {match.pre_match_brief && <PreMatchBriefCard text={match.pre_match_brief} />}
     </div>
   )
 }
