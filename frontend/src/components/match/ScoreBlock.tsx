@@ -46,9 +46,11 @@ export function ScoreBlock({ home, away, score, minute, state, compact }: Props)
         }}>
           {home.name}
         </span>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
-          #{home.fifa_rank}
-        </span>
+        {home.fifa_rank > 0 && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
+            #{home.fifa_rank}
+          </span>
+        )}
       </div>
 
       {/* Score / vs */}
@@ -107,9 +109,11 @@ export function ScoreBlock({ home, away, score, minute, state, compact }: Props)
         }}>
           {away.name}
         </span>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
-          #{away.fifa_rank}
-        </span>
+        {away.fifa_rank > 0 && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
+            #{away.fifa_rank}
+          </span>
+        )}
       </div>
     </div>
   )
