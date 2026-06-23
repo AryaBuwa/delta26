@@ -2,10 +2,6 @@
   <img src="assets/banner.png" width="100%">
 </p>
 
-<p align="center">
-  <img src="assets/logo.png" width="120">
-</p>
-
 <h1 align="center">DEΔTA</h1>
 
 <p align="center">
@@ -43,7 +39,7 @@ App is in active development.
 ## Home
 
 <p align="center">
-  <img src="assets/home.png" width="100%">
+  <img src="assets/homepage.PNG" width="100%">
 </p>
 
 <p align="center">
