@@ -156,7 +156,7 @@ export default function HomePage() {
         regrouped.days.forEach(day => day.matches.forEach(m => setMatch(m)))
         setOverview(regrouped)
       })
-      .catch(() => setError('Could not load matches. Retrying…'))
+      .catch(() => setError('The server wakes up in ~30 seconds. Matches will load automatically.'))
       .finally(() => setLoading(false))
   }, [setMatch])
 
