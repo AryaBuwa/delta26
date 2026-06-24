@@ -2,6 +2,11 @@
 Project Delta — main.py
 FastAPI backend: all routes, SSE streams, admin dashboard API,
 voting endpoints, match data, scheduled jobs, keep-alive.
+
+Patched June 24 2026:
+- admin_model: handles None accuracy (P0-2 fix from model.py)
+- admin_retrain: broadcasts deploy_type + threshold_bypassed in SSE
+- admin_retrain SSE: handles None accuracy honestly
 """
 
 import asyncio
@@ -156,6 +161,9 @@ class ModelVersionDB(Base):
     deploy_decision = Column(String)
     training_duration_s = Column(Float)
     mlflow_run_id = Column(String)
+    # P0-3: track forced deploys so version history has no unexplained gaps
+    deploy_type = Column(String, default="threshold")
+    threshold_bypassed = Column(Boolean, default=False)
 
 
 class SourceHealthDB(Base):
@@ -359,9 +367,6 @@ class UpdateScoreRequest(BaseModel):
 
 # ─────────────────────────────────────────────
 # TRUST SCORE
-# Fixed: real humans on mobile were scoring ~0.54 → EXCLUDED
-# Fix: recaptcha default 0.9, time threshold 5s not 30s,
-#      mobile tap gets partial credit, first-time voter gets full burst credit
 # ─────────────────────────────────────────────
 
 async def calculate_trust_score(
@@ -378,19 +383,19 @@ async def calculate_trust_score(
     # reCAPTCHA (35%) — strongest signal
     score += min(recaptcha_score, 1.0) * 0.35
 
-    # Time on page (20%) — bots submit instantly, humans take seconds
+    # Time on page (20%) — bots submit instantly
     if time_on_page_ms >= 5_000:
         score += 0.20
     elif time_on_page_ms >= 1_000:
         score += 0.10
 
-    # Human interaction (15%) — mouse on desktop, time-spent on mobile
+    # Human interaction (15%) — mouse on desktop, dwell time on mobile
     if mouse_moved:
         score += 0.15
     elif time_on_page_ms >= 2_000:
-        score += 0.08  # mobile tap voter
+        score += 0.08  # mobile tap voter — partial credit
 
-    # Burst detection (15%) — first vote this minute = not a bot
+    # Burst detection (15%)
     one_minute_ago = datetime.now(timezone.utc).timestamp() - 60
     recent_votes = (
         db.query(VoteDB)
@@ -416,9 +421,9 @@ async def calculate_trust_score(
     if not existing:
         score += 0.10
     else:
-        score += 0.05  # changing vote = still human
+        score += 0.05  # vote change = still human
 
-    # Honeypot (5%) — always passes for legitimate frontend
+    # Honeypot (5%) — always passes for legit frontend
     score += 0.05
 
     return min(score, 1.0)
@@ -437,8 +442,8 @@ async def verify_turnstile(token: str) -> bool:
 
 
 async def verify_recaptcha(token: str) -> float:
-    # FIX: was 0.7 — now 0.9 when no key set (trust mode)
-    # 0.9 × 0.35 = 0.315 contribution vs old 0.245
+    # Default 0.9 when no key configured — trust mode
+    # 0.9 × 0.35 = 0.315 contribution → first-time voter scores ≥ 0.65 (Probable)
     if not RECAPTCHA_SECRET or not token:
         return 0.9
     try:
@@ -673,11 +678,9 @@ async def submit_vote(request: Request, vote_req: VoteRequest, db: Session = Dep
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
 
-    # Lock voting for finished matches
     if match.state in ("FT", "ET_2H", "FINISHED", "VOID"):
         raise HTTPException(status_code=400, detail="Voting is closed for this match")
 
-    # 24-hour pre-match window
     now_utc = datetime.now(timezone.utc)
     kickoff = match.kickoff_utc
     if kickoff.tzinfo is None:
@@ -892,10 +895,17 @@ async def admin_model(request: Request, db: Session = Depends(get_db)):
     history = db.query(ModelVersionDB).order_by(ModelVersionDB.version.asc()).all()
     return {
         "current_version": latest.version if latest else 0,
-        "current_accuracy": latest.accuracy_after if latest and latest.accuracy_after else 0.0,
+        # P0-2: accuracy is None when genuinely unknown — frontend shows "—" not a fake %
+        "current_accuracy": latest.accuracy_after if (latest and latest.accuracy_after is not None) else None,
         "training_match_count": latest.version if latest else 0,
         "accuracy_history": [
-            {"version": v.version, "accuracy": v.accuracy_after or 0.0}
+            {
+                "version": v.version,
+                "accuracy": v.accuracy_after if v.accuracy_after is not None else None,
+                # P0-3: expose deploy_type so admin panel can show forced deploy markers
+                "deploy_type": v.deploy_type or "threshold",
+                "threshold_bypassed": v.threshold_bypassed or False,
+            }
             for v in history
         ],
     }
@@ -954,7 +964,6 @@ async def admin_drafts(request: Request, db: Session = Depends(get_db)):
 
     drafts = []
     for match in finished:
-        # Get prediction if available — not required
         prediction = (
             db.query(PredictionDB)
             .filter(PredictionDB.match_id == match.id)
@@ -962,18 +971,13 @@ async def admin_drafts(request: Request, db: Session = Depends(get_db)):
             .first()
         )
 
-        # Determine result
         if match.home_score > match.away_score:
-            winner = match.home_team
             result_line = f"{match.home_team} won"
         elif match.away_score > match.home_score:
-            winner = match.away_team
             result_line = f"{match.away_team} won"
         else:
-            winner = "draw"
             result_line = "Draw"
 
-        # AI prediction line — show v0/no data honestly if no prediction
         if prediction:
             home_pct = round((prediction.home_win or 0) * 100)
             draw_pct = round((prediction.draw or 0) * 100)
@@ -1027,12 +1031,15 @@ async def admin_retrain_simple(request: Request, background_tasks: BackgroundTas
 
     async def run_retrain():
         try:
-            # Fixed: was calling DeltaModel() which doesn't exist
             from model import retrain
             result = await retrain()
             await broker.publish_global("retrain_complete", {
+                # P0-2: accuracy may be None — broadcast honestly, never fabricate
                 "accuracy_after": result.accuracy_after,
                 "run_id": result.run_id,
+                # P0-3: expose deploy type so admin panel knows if threshold was bypassed
+                "deploy_type": result.deploy_type,
+                "threshold_bypassed": result.threshold_bypassed,
             })
         except Exception as e:
             logger.error(f"Retrain failed: {e}")
@@ -1059,7 +1066,7 @@ async def admin_sync_sheets_simple(request: Request, background_tasks: Backgroun
 
 
 # ─────────────────────────────────────────────
-# ADMIN — ADD MATCH / UPDATE SCORE / OVERRIDE STATE
+# ADMIN — MATCH MANAGEMENT
 # ─────────────────────────────────────────────
 
 @app.post("/admin/matches/add")
@@ -1100,12 +1107,18 @@ async def admin_update_score(request: Request, body: UpdateScoreRequest, db: Ses
         raise HTTPException(status_code=404, detail="Match not found")
     match.home_score = body.home_score
     match.away_score = body.away_score
-    if hasattr(body, 'state') and body.state:
+    if body.state:
         match.state = body.state
     match.last_updated = datetime.now(timezone.utc)
     db.commit()
     db.refresh(match)
+    await broker.publish(body.match_id, "score_update", {
+        "home_score": body.home_score,
+        "away_score": body.away_score,
+        "state": body.state,
+    })
     return {"success": True, "match_id": body.match_id, "score": f"{body.home_score}-{body.away_score}"}
+
 
 @app.post("/admin/matches/update-teams")
 @limiter.limit("60/minute")
@@ -1119,6 +1132,7 @@ async def admin_update_teams(request: Request, body: dict, db: Session = Depends
     db.commit()
     return {"success": True}
 
+
 @app.post("/admin/matches/update-debrief")
 @limiter.limit("60/minute")
 async def admin_update_debrief(request: Request, body: dict, db: Session = Depends(get_db)):
@@ -1129,6 +1143,23 @@ async def admin_update_debrief(request: Request, body: dict, db: Session = Depen
     match.post_match_debrief = body.get("post_match_debrief", "")
     db.commit()
     return {"success": True}
+
+
+@app.post("/admin/matches/update-brief")
+@limiter.limit("60/minute")
+async def admin_update_brief(request: Request, body: dict, db: Session = Depends(get_db)):
+    check_admin_password(request)
+    match = db.query(MatchDB).filter(MatchDB.id == body["match_id"]).first()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+    match.pre_match_brief = body.get("pre_match_brief", "")
+    db.commit()
+    return {"success": True}
+
+
+# ─────────────────────────────────────────────
+# LEGACY ADMIN DASHBOARD (kept for compatibility)
+# ─────────────────────────────────────────────
 
 @app.get("/api/admin/dashboard")
 @limiter.limit("60/minute")
@@ -1224,7 +1255,6 @@ def _match_to_dict(match: MatchDB, admin: bool = False, include_debrief: bool = 
         "source_used": match.source_used,
         "last_updated": match.last_updated.isoformat() if match.last_updated else None,
         "pre_match_brief": match.pre_match_brief,
-        # Always include debrief — frontend shows it on match detail page
         "post_match_debrief": match.post_match_debrief,
         "went_to_et": match.went_to_et,
         "went_to_penalties": match.went_to_penalties,
