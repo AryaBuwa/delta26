@@ -9,6 +9,11 @@ Fixed June 21 2026:
 - Dixon-Coles: removed equality constraint (L-BFGS-B can't handle it), added bounds
 - XGBoost: added NaN/inf guards in build_feature_vector
 - retrain_model: XGBoost failure no longer crashes the whole retrain
+
+Fixed June 24 2026 (P0 fixes):
+- P0-1: train_test_split replaced with chronological split (no data leakage)
+- P0-2: fabricated accuracy fallback removed — returns None when real accuracy unavailable
+- P0-3: forced deploy documented as world_cup_mode with explicit flag in result
 """
 
 import os
@@ -23,7 +28,6 @@ from pathlib import Path
 from scipy.optimize import minimize
 from scipy.stats import poisson
 from xgboost import XGBClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, log_loss
 from sklearn.preprocessing import LabelEncoder
 from loguru import logger
@@ -90,7 +94,6 @@ def dixon_coles_log_likelihood(params_flat: np.ndarray, matches: list[dict], tea
     defences = params_flat[n_teams:2*n_teams]
     rho = params_flat[2*n_teams]
 
-    # Clamp to prevent overflow
     attacks = np.clip(attacks, -3, 3)
     defences = np.clip(defences, -3, 3)
     rho = np.clip(rho, -0.99, 0.99)
@@ -133,7 +136,6 @@ def fit_dixon_coles(matches: list[dict]) -> DixonColesParams:
     x0 = np.zeros(2 * n + 1)
     x0[2*n] = -0.1
 
-    # Bounds prevent overflow — L-BFGS-B supports bounds but NOT equality constraints
     bounds = [(-2, 2)] * (2 * n) + [(-0.99, 0.0)]
 
     try:
@@ -186,7 +188,6 @@ def monte_carlo_simulate(
 ) -> MonteCarloResult:
     _guard_output_type("scoreline_distribution")
 
-    # Safety clamp
     lambda_home = float(np.clip(lambda_home, 0.1, 10.0))
     mu_away = float(np.clip(mu_away, 0.1, 10.0))
     rho = float(np.clip(rho, -0.99, 0.99))
@@ -258,7 +259,6 @@ def build_feature_vector(match_data: dict, dc_params: DixonColesParams) -> np.nd
     home_r = dc_params.team_ratings.get(home, TeamRatings())
     away_r = dc_params.team_ratings.get(away, TeamRatings())
 
-    # Safe division with clamp
     home_attack = float(np.clip(home_r.attack, 0.1, 10.0))
     away_attack = float(np.clip(away_r.attack, 0.1, 10.0))
     home_defence = float(np.clip(home_r.defence, 0.1, 10.0))
@@ -299,11 +299,30 @@ def build_feature_vector(match_data: dict, dc_params: DixonColesParams) -> np.nd
         match_data.get("match_importance", 1),
     ]], dtype=np.float64)
 
-    # Final NaN/inf check
     if not np.all(np.isfinite(features)):
         features = np.nan_to_num(features, nan=0.0, posinf=1.0, neginf=0.0)
 
     return features
+
+
+def _chronological_split(X: np.ndarray, y: np.ndarray, test_size: float = 0.2):
+    """
+    P0 FIX: Chronological split instead of random train_test_split.
+
+    Why this matters: matches are ordered by date. Using random split means
+    the model could train on match 80 and test on match 5, i.e. it has seen
+    the "future" during training. This makes accuracy numbers invalid for the
+    research paper claim that "the model improves as it sees more matches."
+
+    Chronological split: train on first 80%, test on last 20%.
+    No shuffling. No data leakage. Academically valid.
+    """
+    n = len(X)
+    split_idx = int(n * (1 - test_size))
+    # Ensure at least 1 sample in each split
+    split_idx = max(1, min(split_idx, n - 1))
+    return X[:split_idx], X[split_idx:], y[:split_idx], y[split_idx:]
+
 
 def train_xgboost(matches: list[dict], dc_params: DixonColesParams) -> tuple[XGBClassifier, dict]:
     if len(matches) < 10:
@@ -330,13 +349,18 @@ def train_xgboost(matches: list[dict], dc_params: DixonColesParams) -> tuple[XGB
         return None, {}
 
     X = np.array(X_list, dtype=np.float64)
-    # Final safety check
     X = np.nan_to_num(X, nan=0.0, posinf=1.0, neginf=0.0)
 
     le = LabelEncoder()
     y = le.fit_transform(y_list)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # P0-1: Chronological split — matches are already ordered by date in _all_match_results
+    # Train on first 80%, test on last 20%. No shuffling, no data leakage.
+    X_train, X_test, y_train, y_test = _chronological_split(X, y, test_size=0.2)
+
+    if len(X_test) == 0:
+        logger.warning("[Model] No test samples after chronological split — skipping accuracy calc")
+        return None, {}
 
     model = XGBClassifier(
         n_estimators=100,
@@ -568,19 +592,22 @@ def setup_mlflow():
 class RetrainResult:
     deployed: bool
     model_version: int
-    accuracy_before: float
-    accuracy_after: float
-    improvement_pct: float
+    accuracy_before: Optional[float]   # P0-2: None when unknown, never fabricated
+    accuracy_after: Optional[float]    # P0-2: None when XGBoost not available
+    improvement_pct: Optional[float]   # P0-2: None when either accuracy is unknown
     deploy_decision_reason: str
     training_duration_s: float
     mlflow_run_id: str
     model_path: Optional[str]
     xgb_metrics: dict = field(default_factory=dict)
+    # P0-3: forced deploy tracking
+    deploy_type: str = "threshold"     # "threshold" | "world_cup_mode"
+    threshold_bypassed: bool = False
 
 def retrain_model(
     all_matches: list[dict],
     current_version: int,
-    current_accuracy: float,
+    current_accuracy: Optional[float],  # P0-2: accept None
     tournament_phase: str,
 ) -> RetrainResult:
     import time as time_module
@@ -600,14 +627,12 @@ def retrain_model(
 
     completed = [m for m in all_matches if m.get("home_goals") is not None]
 
-    # Fit Dixon-Coles
     try:
         dc_params = fit_dixon_coles(completed) if completed else DixonColesParams()
     except Exception as e:
         logger.error(f"[Retrain] Dixon-Coles failed: {e} — using defaults")
         dc_params = DixonColesParams()
 
-    # Train XGBoost — failure is non-fatal
     xgb_model = None
     xgb_metrics = {}
     try:
@@ -615,27 +640,52 @@ def retrain_model(
     except Exception as e:
         logger.warning(f"[Retrain] XGBoost failed: {e} — using Dixon-Coles + MC only")
 
-    # Accuracy: use XGBoost accuracy if available, else estimate from DC
-    if xgb_metrics.get("accuracy"):
-        accuracy_after = xgb_metrics["accuracy"]
+    # P0-2: Real accuracy only — never fabricate a number
+    # If XGBoost trained successfully, use its test-set accuracy (chronological split).
+    # If not, accuracy is genuinely unknown — return None. UI shows "—" not a fake %.
+    if xgb_metrics.get("accuracy") is not None:
+        accuracy_after: Optional[float] = xgb_metrics["accuracy"]
     else:
-        # Dixon-Coles baseline — estimate ~55% accuracy for football
-        accuracy_after = max(current_accuracy, 0.52)
+        accuracy_after = None
+        logger.info(
+            "[Retrain] XGBoost accuracy unavailable (too few matches or training failed). "
+            "Reporting None — will display as '—' in admin panel. NOT fabricating a number."
+        )
 
-    improvement = accuracy_after - current_accuracy
-    improvement_pct = improvement * 100
+    # Improvement: only calculable when both before and after are real numbers
+    if current_accuracy is not None and accuracy_after is not None:
+        improvement = accuracy_after - current_accuracy
+        improvement_pct: Optional[float] = improvement * 100
+        threshold_met = improvement >= threshold
+    else:
+        improvement = None
+        improvement_pct = None
+        threshold_met = False  # can't confirm threshold without real numbers
 
-    deployed = improvement >= threshold
-    reason = (
-        f"Improved {improvement_pct:.1f}% ≥ threshold {threshold*100:.0f}%"
-        if deployed else
-        f"Improvement {improvement_pct:.1f}% < threshold {threshold*100:.0f}% — keeping v{current_version}"
-    )
+    # P0-3: World Cup mode forced deploy — always deploy so Render has a model to load.
+    # This bypasses the accuracy threshold. Logged explicitly so version history
+    # has no unexplained gaps. Paper can cite: "N forced deploys marked world_cup_mode
+    # in supplementary data — accuracy threshold inapplicable when XGBoost unavailable."
+    deployed = True
+    deploy_type = "world_cup_mode"
+    threshold_bypassed = not threshold_met
 
-    # Always save the model (even if not "deployed" by accuracy threshold)
-    # so Render has something to load
-    deployed = True  # override — always deploy during tournament
-    reason = f"Deployed v{new_version} — trained on {len(completed)} matches"
+    if threshold_met:
+        reason = (
+            f"v{new_version}: improvement {improvement_pct:.1f}% ≥ threshold {threshold*100:.0f}% — deployed"
+        )
+        deploy_type = "threshold"
+        threshold_bypassed = False
+    elif improvement_pct is not None:
+        reason = (
+            f"v{new_version}: improvement {improvement_pct:.1f}% < threshold {threshold*100:.0f}% "
+            f"— threshold not met, but deployed as world_cup_mode to ensure model availability"
+        )
+    else:
+        reason = (
+            f"v{new_version}: accuracy unavailable (insufficient data for XGBoost) "
+            f"— deployed as world_cup_mode. Dixon-Coles + Monte Carlo active."
+        )
 
     duration = time_module.time() - start_t
 
@@ -645,8 +695,10 @@ def retrain_model(
         "version": new_version,
         "trained_at": datetime.utcnow().isoformat(),
         "training_matches": len(completed),
-        "accuracy": accuracy_after,
+        "accuracy": accuracy_after,          # None is stored honestly
         "xgb_metrics": xgb_metrics,
+        "deploy_type": deploy_type,
+        "threshold_bypassed": threshold_bypassed,
     }
     new_model_path = MODELS_DIR / f"model_v{new_version}.pkl"
     with open(new_model_path, "wb") as f:
@@ -660,9 +712,15 @@ def retrain_model(
                 mlflow.log_param("model_version", new_version)
                 mlflow.log_param("training_matches", len(completed))
                 mlflow.log_param("deployed", deployed)
-                mlflow.log_metric("accuracy_before", current_accuracy)
-                mlflow.log_metric("accuracy_after", accuracy_after)
-                mlflow.log_metric("improvement_pct", improvement_pct)
+                mlflow.log_param("deploy_type", deploy_type)
+                mlflow.log_param("threshold_bypassed", threshold_bypassed)
+                # P0-2: only log real numbers — skip if None
+                if current_accuracy is not None:
+                    mlflow.log_metric("accuracy_before", current_accuracy)
+                if accuracy_after is not None:
+                    mlflow.log_metric("accuracy_after", accuracy_after)
+                if improvement_pct is not None:
+                    mlflow.log_metric("improvement_pct", improvement_pct)
                 mlflow.log_metric("training_duration_s", duration)
                 if xgb_model is not None:
                     mlflow.xgboost.log_model(xgb_model, "xgboost_model")
@@ -671,9 +729,12 @@ def retrain_model(
             logger.warning(f"[MLflow] Logging failed: {e}")
 
     logger.info(
-        f"[Retrain] v{new_version} complete: "
-        f"accuracy {current_accuracy:.3f} → {accuracy_after:.3f} "
-        f"({improvement_pct:+.1f}%) | {duration:.1f}s"
+        f"[Retrain] v{new_version} complete — "
+        f"accuracy: {current_accuracy} → {accuracy_after} "
+        f"({improvement_pct:+.1f}% | {duration:.1f}s) "
+        f"deploy_type={deploy_type}"
+        if improvement_pct is not None else
+        f"[Retrain] v{new_version} complete — accuracy: unavailable | {duration:.1f}s | deploy_type={deploy_type}"
     )
 
     return RetrainResult(
@@ -687,6 +748,8 @@ def retrain_model(
         mlflow_run_id=run_id,
         model_path=str(new_model_path),
         xgb_metrics=xgb_metrics,
+        deploy_type=deploy_type,
+        threshold_bypassed=threshold_bypassed,
     )
 
 # ─────────────────────────────────────────────
@@ -780,7 +843,7 @@ def format_confidence_display(prediction: EnsemblePrediction) -> dict:
 _dc_params: Optional[DixonColesParams] = None
 _xgb_model: Optional[XGBClassifier] = None
 _current_version: int = 0
-_current_accuracy: float = 0.0
+_current_accuracy: Optional[float] = None   # P0-2: None not 0.0
 _all_match_results: list[dict] = []
 
 def _ensure_model_loaded():
@@ -819,10 +882,12 @@ class ModelResult:
 
 @dataclass
 class PipelineRetrainResult:
-    accuracy_after: float
+    accuracy_after: Optional[float]    # P0-2: None when unavailable
     run_id: str
     duration_s: float
     feature_importances: dict
+    deploy_type: str = "threshold"
+    threshold_bypassed: bool = False
 
 async def predict(match_id: str, home: str, away: str, **kwargs) -> ModelResult:
     _ensure_model_loaded()
@@ -845,27 +910,34 @@ async def retrain(match_id: str = "") -> PipelineRetrainResult:
     result: RetrainResult = retrain_model(
         all_matches=_all_match_results,
         current_version=_current_version,
-        current_accuracy=_current_accuracy,
+        current_accuracy=_current_accuracy,   # P0-2: pass None cleanly
         tournament_phase=phase,
     )
 
     if result.deployed:
         _dc_params, _xgb_model, _current_version = load_model(version=result.model_version)
-        _current_accuracy = result.accuracy_after
-        logger.info(f"[Model] Deployed v{_current_version} (accuracy: {_current_accuracy:.3f})")
+        _current_accuracy = result.accuracy_after  # P0-2: may be None — that's correct
+        logger.info(
+            f"[Model] Deployed v{_current_version} "
+            f"(accuracy: {_current_accuracy if _current_accuracy else '—'}) "
+            f"[{result.deploy_type}]"
+        )
 
     return PipelineRetrainResult(
         accuracy_after=result.accuracy_after,
         run_id=result.mlflow_run_id,
         duration_s=result.training_duration_s,
         feature_importances=result.xgb_metrics.get("feature_importances", {}),
+        deploy_type=result.deploy_type,
+        threshold_bypassed=result.threshold_bypassed,
     )
 
 def get_current_version() -> int:
     _ensure_model_loaded()
     return _current_version
 
-def get_accuracy() -> float:
+def get_accuracy() -> Optional[float]:
+    """P0-2: Returns None when accuracy is genuinely unknown. Never returns a fabricated number."""
     return _current_accuracy
 
 def add_match_result(match_result: dict):
