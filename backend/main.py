@@ -3,10 +3,10 @@ Project Delta — main.py
 FastAPI backend: all routes, SSE streams, admin dashboard API,
 voting endpoints, match data, scheduled jobs, keep-alive.
 
-Patched June 24 2026:
-- admin_model: handles None accuracy (P0-2 fix from model.py)
-- admin_retrain: broadcasts deploy_type + threshold_bypassed in SSE
-- admin_retrain SSE: handles None accuracy honestly
+Session 11 patch:
+- init_db_factory(SessionLocal) added after pipeline starts
+  so pipeline.py HOOK 1 (auto DB writes) actually works
+- All other code unchanged
 """
 
 import asyncio
@@ -161,7 +161,6 @@ class ModelVersionDB(Base):
     deploy_decision = Column(String)
     training_duration_s = Column(Float)
     mlflow_run_id = Column(String)
-    # P0-3: track forced deploys so version history has no unexplained gaps
     deploy_type = Column(String, default="threshold")
     threshold_bypassed = Column(Boolean, default=False)
 
@@ -379,23 +378,15 @@ async def calculate_trust_score(
     match_id: str,
 ) -> float:
     score = 0.0
-
-    # reCAPTCHA (35%) — strongest signal
     score += min(recaptcha_score, 1.0) * 0.35
-
-    # Time on page (20%) — bots submit instantly
     if time_on_page_ms >= 5_000:
         score += 0.20
     elif time_on_page_ms >= 1_000:
         score += 0.10
-
-    # Human interaction (15%) — mouse on desktop, dwell time on mobile
     if mouse_moved:
         score += 0.15
     elif time_on_page_ms >= 2_000:
-        score += 0.08  # mobile tap voter — partial credit
-
-    # Burst detection (15%)
+        score += 0.08
     one_minute_ago = datetime.now(timezone.utc).timestamp() - 60
     recent_votes = (
         db.query(VoteDB)
@@ -411,8 +402,6 @@ async def calculate_trust_score(
         score += 0.10
     elif recent_votes < 10:
         score += 0.05
-
-    # Unique fingerprint (10%)
     existing = (
         db.query(VoteDB)
         .filter(VoteDB.fingerprint_hash == fingerprint_hash, VoteDB.match_id == match_id)
@@ -421,11 +410,8 @@ async def calculate_trust_score(
     if not existing:
         score += 0.10
     else:
-        score += 0.05  # vote change = still human
-
-    # Honeypot (5%) — always passes for legit frontend
+        score += 0.05
     score += 0.05
-
     return min(score, 1.0)
 
 
@@ -442,8 +428,6 @@ async def verify_turnstile(token: str) -> bool:
 
 
 async def verify_recaptcha(token: str) -> float:
-    # Default 0.9 when no key configured — trust mode
-    # 0.9 × 0.35 = 0.315 contribution → first-time voter scores ≥ 0.65 (Probable)
     if not RECAPTCHA_SECRET or not token:
         return 0.9
     try:
@@ -472,10 +456,12 @@ async def lifespan(app: FastAPI):
     init_db()
 
     try:
-        from pipeline import PipelineOrchestrator
+        from pipeline import PipelineOrchestrator, init_db_factory
         app.state.pipeline = PipelineOrchestrator(broker=broker)
         await app.state.pipeline.start()
-        logger.info("✅ Pipeline started")
+        # ✅ SESSION 11: Give pipeline access to DB so auto score writes work
+        init_db_factory(SessionLocal)
+        logger.info("✅ Pipeline started + DB factory registered")
     except Exception as e:
         logger.error(f"❌ Pipeline failed to start: {type(e).__name__}: {e}")
         import traceback
@@ -592,17 +578,14 @@ async def health_detailed(db: Session = Depends(get_db)):
 @limiter.limit("15/minute")
 async def get_matches(request: Request, db: Session = Depends(get_db)):
     matches = db.query(MatchDB).order_by(MatchDB.kickoff_utc).all()
-
     days: dict[str, list] = {}
     for m in matches:
         date_key = m.kickoff_utc.strftime("%Y-%m-%d") if m.kickoff_utc else "unknown"
         if date_key not in days:
             days[date_key] = []
         days[date_key].append(_match_to_dict(m))
-
     live_states = {"LIVE", "HT", "LIVE_2H", "ET_1H", "ET_HT", "ET_2H", "PENALTIES"}
     finished_states = {"FINISHED", "FT"}
-
     return {
         "days": [
             {"date": date, "matches": day_matches}
@@ -671,16 +654,12 @@ async def get_vote_summary(match_id: str, request: Request, db: Session = Depend
 async def submit_vote(request: Request, vote_req: VoteRequest, db: Session = Depends(get_db)):
     if not await verify_turnstile(vote_req.turnstile_token):
         raise HTTPException(status_code=400, detail="Bot check failed")
-
     recaptcha_score = await verify_recaptcha(vote_req.recaptcha_token or "")
-
     match = db.query(MatchDB).filter(MatchDB.id == vote_req.match_id).first()
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
-
     if match.state in ("FT", "ET_2H", "FINISHED", "VOID"):
         raise HTTPException(status_code=400, detail="Voting is closed for this match")
-
     now_utc = datetime.now(timezone.utc)
     kickoff = match.kickoff_utc
     if kickoff.tzinfo is None:
@@ -688,21 +667,16 @@ async def submit_vote(request: Request, vote_req: VoteRequest, db: Session = Dep
     hours_until_kickoff = (kickoff - now_utc).total_seconds() / 3600
     if hours_until_kickoff > 24:
         raise HTTPException(status_code=400, detail="Voting opens 24 hours before kickoff")
-
     try:
         current_minute = int(str(match.minute).replace("+", "").split("+")[0])
     except (ValueError, AttributeError):
         current_minute = 0
-
     if current_minute >= 85 and match.state not in ("PENALTIES",):
         raise HTTPException(status_code=400, detail="Voting locked at 85 minutes")
-
     if vote_req.is_penalty_vote and match.state != "PENALTIES":
         raise HTTPException(status_code=400, detail="Penalty vote only valid during shootout")
-
     client_ip = get_remote_address(request)
     ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:16]
-
     trust_score = await calculate_trust_score(
         recaptcha_score=recaptcha_score,
         time_on_page_ms=vote_req.time_on_page_ms,
@@ -712,7 +686,6 @@ async def submit_vote(request: Request, vote_req: VoteRequest, db: Session = Dep
         db=db,
         match_id=vote_req.match_id,
     )
-
     existing = (
         db.query(VoteDB)
         .filter(
@@ -722,10 +695,8 @@ async def submit_vote(request: Request, vote_req: VoteRequest, db: Session = Dep
         )
         .first()
     )
-
     minutes_before_ko = max(0, int((kickoff - now_utc).total_seconds() / 60))
     current_ai_confidence = match.model_confidence or {}
-
     if existing:
         changed_from = existing.pick
         existing.pick = vote_req.pick
@@ -767,10 +738,8 @@ async def submit_vote(request: Request, vote_req: VoteRequest, db: Session = Dep
         db.refresh(new_vote)
         vote_id = new_vote.id
         is_update = False
-
     summary = await _get_vote_summary_dict(vote_req.match_id, db)
     await broker.publish(vote_req.match_id, "vote_update", summary)
-
     return {
         "success": True,
         "vote_id": vote_id,
@@ -794,9 +763,7 @@ async def stream_match(match_id: str, request: Request):
         async def test_gen():
             yield 'data: {"type": "connected", "match_id": "test"}\n\n'
         return StreamingResponse(test_gen(), media_type="text/event-stream")
-
     q = broker.subscribe(match_id)
-
     async def event_generator() -> AsyncGenerator[str, None]:
         yield f"data: {json.dumps({'type': 'connected', 'match_id': match_id})}\n\n"
         try:
@@ -812,7 +779,6 @@ async def stream_match(match_id: str, request: Request):
             pass
         finally:
             broker.unsubscribe(match_id, q)
-
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -823,7 +789,6 @@ async def stream_match(match_id: str, request: Request):
 @app.get("/stream/global/all")
 async def stream_global(request: Request):
     q = broker.subscribe_global()
-
     async def event_generator() -> AsyncGenerator[str, None]:
         yield f"data: {json.dumps({'type': 'connected', 'scope': 'global'})}\n\n"
         try:
@@ -839,7 +804,6 @@ async def stream_global(request: Request):
             pass
         finally:
             broker.unsubscribe_global(q)
-
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -895,14 +859,12 @@ async def admin_model(request: Request, db: Session = Depends(get_db)):
     history = db.query(ModelVersionDB).order_by(ModelVersionDB.version.asc()).all()
     return {
         "current_version": latest.version if latest else 0,
-        # P0-2: accuracy is None when genuinely unknown — frontend shows "—" not a fake %
         "current_accuracy": latest.accuracy_after if (latest and latest.accuracy_after is not None) else None,
         "training_match_count": latest.version if latest else 0,
         "accuracy_history": [
             {
                 "version": v.version,
                 "accuracy": v.accuracy_after if v.accuracy_after is not None else None,
-                # P0-3: expose deploy_type so admin panel can show forced deploy markers
                 "deploy_type": v.deploy_type or "threshold",
                 "threshold_bypassed": v.threshold_bypassed or False,
             }
@@ -923,7 +885,6 @@ async def admin_research(request: Request, db: Session = Depends(get_db)):
     excluded_votes = db.query(VoteDB).filter(VoteDB.trust_score < 0.6, VoteDB.is_penalty_vote == False).count()
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     votes_today = db.query(VoteDB).filter(VoteDB.timestamp >= today_start, VoteDB.is_penalty_vote == False).count()
-
     all_matches = db.query(MatchDB).order_by(MatchDB.kickoff_utc).all()
     votes_per_match = []
     for m in all_matches:
@@ -937,7 +898,6 @@ async def admin_research(request: Request, db: Session = Depends(get_db)):
             "total": total,
             "verified": verified,
         })
-
     return {
         "total_votes": total_votes,
         "verified_votes": verified_votes,
@@ -961,7 +921,6 @@ async def admin_drafts(request: Request, db: Session = Depends(get_db)):
     finished = db.query(MatchDB).filter(
         MatchDB.state.in_(["FINISHED", "FT"])
     ).order_by(MatchDB.kickoff_utc.desc()).limit(5).all()
-
     drafts = []
     for match in finished:
         prediction = (
@@ -970,23 +929,17 @@ async def admin_drafts(request: Request, db: Session = Depends(get_db)):
             .order_by(PredictionDB.id.desc())
             .first()
         )
-
         if match.home_score > match.away_score:
             result_line = f"{match.home_team} won"
         elif match.away_score > match.home_score:
             result_line = f"{match.away_team} won"
         else:
             result_line = "Draw"
-
         if prediction:
             home_pct = round((prediction.home_win or 0) * 100)
             draw_pct = round((prediction.draw or 0) * 100)
             away_pct = round((prediction.away_win or 0) * 100)
-            probs = {
-                "home": prediction.home_win or 0,
-                "draw": prediction.draw or 0,
-                "away": prediction.away_win or 0,
-            }
+            probs = {"home": prediction.home_win or 0, "draw": prediction.draw or 0, "away": prediction.away_win or 0}
             ai_pick = max(probs, key=probs.get)
             ai_correct = (
                 (ai_pick == "home" and match.home_score > match.away_score) or
@@ -1000,9 +953,7 @@ async def admin_drafts(request: Request, db: Session = Depends(get_db)):
             result_emoji = "📊"
             pred_line = "AI prediction: Not available (model at v0 — pre-training period)"
             model_line = "Model v0 — training begins from Match 17 onwards."
-
         debrief = match.post_match_debrief or "Post-match analysis pending."
-
         linkedin = f"""Match: {match.home_team} {match.home_score}–{match.away_score} {match.away_team}
 {pred_line}
 Result: {result_emoji} {result_line}
@@ -1011,16 +962,13 @@ Result: {result_emoji} {result_line}
 
 {model_line}
 #WorldCup2026 #AI #buildinpublic #MachineLearning"""
-
         x_post = f"""{match.home_team} {match.home_score}–{match.away_score} {match.away_team} {result_emoji}
 {pred_line}
 {model_line}
 delta26.vercel.app
 #WorldCup2026 #AI"""
-
         drafts.append({"platform": "linkedin", "match_id": match.id, "content": linkedin})
         drafts.append({"platform": "x", "match_id": match.id, "content": x_post})
-
     return drafts
 
 
@@ -1028,23 +976,19 @@ delta26.vercel.app
 @limiter.limit("5/minute")
 async def admin_retrain_simple(request: Request, background_tasks: BackgroundTasks):
     check_admin_password(request)
-
     async def run_retrain():
         try:
             from model import retrain
             result = await retrain()
             await broker.publish_global("retrain_complete", {
-                # P0-2: accuracy may be None — broadcast honestly, never fabricate
                 "accuracy_after": result.accuracy_after,
                 "run_id": result.run_id,
-                # P0-3: expose deploy type so admin panel knows if threshold was bypassed
                 "deploy_type": result.deploy_type,
                 "threshold_bypassed": result.threshold_bypassed,
             })
         except Exception as e:
             logger.error(f"Retrain failed: {e}")
             await broker.publish_global("retrain_failed", {"error": str(e)})
-
     background_tasks.add_task(run_retrain)
     return {"message": "Retraining started — watch SSE for result"}
 
@@ -1053,14 +997,12 @@ async def admin_retrain_simple(request: Request, background_tasks: BackgroundTas
 @limiter.limit("10/minute")
 async def admin_sync_sheets_simple(request: Request, background_tasks: BackgroundTasks):
     check_admin_password(request)
-
     async def run_sync():
         try:
             from sheets import flush_queue
             await flush_queue()
         except Exception as e:
             logger.error(f"Sheets sync failed: {e}")
-
     background_tasks.add_task(run_sync)
     return {"message": "Sheets sync started"}
 
@@ -1076,7 +1018,6 @@ async def admin_add_match(request: Request, body: AddMatchRequest, db: Session =
     existing = db.query(MatchDB).filter(MatchDB.id == body.match_id).first()
     if existing:
         return {"status": "already_exists", "match_id": body.match_id}
-
     kickoff = datetime.fromisoformat(body.kickoff_utc.replace("Z", "+00:00"))
     match = MatchDB(
         id=body.match_id,
@@ -1157,10 +1098,6 @@ async def admin_update_brief(request: Request, body: dict, db: Session = Depends
     return {"success": True}
 
 
-# ─────────────────────────────────────────────
-# LEGACY ADMIN DASHBOARD (kept for compatibility)
-# ─────────────────────────────────────────────
-
 @app.get("/api/admin/dashboard")
 @limiter.limit("60/minute")
 async def admin_dashboard(request: Request, db: Session = Depends(get_db), _: bool = Depends(get_admin)):
@@ -1180,10 +1117,7 @@ async def admin_dashboard(request: Request, db: Session = Depends(get_db), _: bo
             "version": latest_model.version if latest_model else 0,
             "accuracy_after": latest_model.accuracy_after if latest_model else None,
         },
-        "votes": {
-            "total": total_votes, "today": today_votes,
-            "verified": verified_votes, "probable": probable_votes,
-        },
+        "votes": {"total": total_votes, "today": today_votes, "verified": verified_votes, "probable": probable_votes},
     }
 
 
@@ -1203,10 +1137,6 @@ async def admin_override_state(request: Request, body: MatchStateOverride, db: S
     await broker.publish(body.match_id, "state_change", {"old_state": old_state, "new_state": body.state})
     return {"success": True, "old_state": old_state, "new_state": body.state}
 
-
-# ─────────────────────────────────────────────
-# INTERNAL
-# ─────────────────────────────────────────────
 
 @app.post("/internal/publish")
 async def internal_publish(request: Request, body: dict):
@@ -1230,16 +1160,8 @@ async def internal_publish(request: Request, body: dict):
 def _match_to_dict(match: MatchDB, admin: bool = False, include_debrief: bool = False) -> dict:
     d = {
         "match_id": match.id,
-        "home": {
-            "name": match.home_team,
-            "code": match.home_team[:3].upper(),
-            "fifa_rank": 0,
-        },
-        "away": {
-            "name": match.away_team,
-            "code": match.away_team[:3].upper(),
-            "fifa_rank": 0,
-        },
+        "home": {"name": match.home_team, "code": match.home_team[:3].upper(), "fifa_rank": 0},
+        "away": {"name": match.away_team, "code": match.away_team[:3].upper(), "fifa_rank": 0},
         "kickoff_utc": match.kickoff_utc.isoformat() if match.kickoff_utc else None,
         "venue": match.venue or "",
         "city": match.venue.split(",")[-1].strip() if match.venue else "",
@@ -1271,8 +1193,7 @@ def _prediction_to_dict(p: PredictionDB) -> dict:
         "away_win": p.away_win or 0.33,
         "confidence_range": {
             "home_win": f"{round((p.confidence_range_low or 0) * 100)}-{round((p.confidence_range_high or 0) * 100)}%",
-            "draw": "—",
-            "away_win": "—",
+            "draw": "—", "away_win": "—",
         },
         "predicted_scorer": p.predicted_scorer,
         "predicted_score": p.predicted_score,
@@ -1284,20 +1205,15 @@ def _prediction_to_dict(p: PredictionDB) -> dict:
 
 def _event_to_dict(e: LiveEventDB) -> dict:
     return {
-        "type": e.event_type,
-        "minute": e.minute,
-        "player": e.player,
-        "team": e.team,
-        "sentiment": e.sentiment,
-        "context": e.context,
+        "type": e.event_type, "minute": e.minute, "player": e.player,
+        "team": e.team, "sentiment": e.sentiment, "context": e.context,
         "timestamp": e.timestamp.isoformat() if e.timestamp else None,
     }
 
 
 def _source_health_to_dict(s: SourceHealthDB) -> dict:
     return {
-        "name": s.source_name,
-        "status": s.status or "ok",
+        "name": s.source_name, "status": s.status or "ok",
         "last_check": s.last_check.isoformat() if s.last_check else None,
         "block_count_today": s.block_count_today,
         "consecutive_failures": s.consecutive_failures,
@@ -1306,9 +1222,7 @@ def _source_health_to_dict(s: SourceHealthDB) -> dict:
 
 async def _get_vote_summary_dict(match_id: str, db: Session) -> dict:
     votes = db.query(VoteDB).filter(
-        VoteDB.match_id == match_id,
-        VoteDB.trust_score >= 0.6,
-        VoteDB.is_penalty_vote == False,
+        VoteDB.match_id == match_id, VoteDB.trust_score >= 0.6, VoteDB.is_penalty_vote == False,
     ).all()
     total = len(votes)
     if total == 0:
@@ -1323,10 +1237,6 @@ async def _get_vote_summary_dict(match_id: str, db: Session) -> dict:
         "away_pct": round(away / total * 100, 1),
     }
 
-
-# ─────────────────────────────────────────────
-# ENTRY POINT
-# ─────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn
