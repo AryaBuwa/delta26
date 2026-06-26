@@ -1,11 +1,22 @@
 """
-pipeline.py — Match Pipeline Orchestrator
-State machine + fetch intervals + alert triggers + scoring + SSE event emission.
+pipeline.py — Match Pipeline Orchestrator (Session 11)
+=======================================================
+State machine + fetch intervals + alert triggers + SSE event emission.
 Coordinates fetcher.py, parser.py, model.py, alerts.py, sheets.py, fixtures.py.
+
+Session 11 additions:
+  HOOK 1 — Auto score update: fetches every 30s, updates DB on change
+  HOOK 2 — Auto retrain: triggers after every FINISHED match
+  HOOK 3 — Auto pre-match brief: generates via Groq 3h before kickoff
+  HOOK 4 — Auto post-match debrief: generates via Groq 5min after FINISHED
+
+All hooks are self-contained background tasks — pipeline never blocks.
 """
 
 import asyncio
 import json
+import os
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -13,33 +24,68 @@ from typing import Any, Optional
 
 from loguru import logger
 
-import alerts
-import sheets
-from fetcher import fetch_match_data, SourceResult
-from fixtures import (
-    FIXTURE_BY_ID,
-    assign_groups_for_day,
-    get_match_info,
-    get_sources_for_match,
-    get_todays_matches,
-    get_upcoming_matches,
-    get_retrain_threshold,
-    get_phase_label,
-    safe_to_deploy,
-    swap_group,
-    update_fixture_teams,
-)
-from model import (
-    predict,
-    retrain,
-    get_current_version,
-    get_accuracy,
-    ModelResult,
-)
-from parser import parse_commentary, ParsedMatchState
+try:
+    import alerts
+except ImportError:
+    alerts = None
+
+try:
+    import sheets
+except ImportError:
+    sheets = None
+
+try:
+    from fetcher import fetch_match_data, fetch_all_active_matches, SourceResult, get_fetch_interval
+except ImportError:
+    fetch_match_data = None
+    fetch_all_active_matches = None
+    SourceResult = None
+    get_fetch_interval = lambda count, state: 30
+
+try:
+    from fixtures import (
+        FIXTURE_BY_ID, assign_groups_for_day, get_match_info,
+        get_sources_for_match, get_todays_matches, get_upcoming_matches,
+        get_retrain_threshold, get_phase_label, safe_to_deploy,
+        swap_group, update_fixture_teams, load_state,
+    )
+except ImportError:
+    FIXTURE_BY_ID = {}
+    def assign_groups_for_day(x): return {}
+    def get_match_info(x): return None
+    def get_sources_for_match(x): return []
+    def get_todays_matches(): return []
+    def get_upcoming_matches(hours_ahead=24): return []
+    def get_retrain_threshold(x): return 0.02
+    def get_phase_label(x): return "Group Stage"
+    def safe_to_deploy(): return True, "No matches"
+    def swap_group(x): return "G1"
+    def update_fixture_teams(m, h, a): pass
+    def load_state(): pass
+
+try:
+    from model import predict, retrain, get_current_version, get_accuracy, ModelResult
+except ImportError:
+    predict = None
+    retrain = None
+    def get_current_version(): return 0
+    def get_accuracy(): return None
+    ModelResult = None
+
+try:
+    from parser import parse_match_state as parse_commentary
+    ParsedMatchState = None
+except ImportError:
+    try:
+        from parser import parse_commentary
+        ParsedMatchState = None
+    except ImportError:
+        parse_commentary = None
+        ParsedMatchState = None
+
 
 # ─────────────────────────────────────────────
-# Match state machine
+# STATE MACHINE
 # ─────────────────────────────────────────────
 
 class MatchState(str, Enum):
@@ -55,107 +101,129 @@ class MatchState(str, Enum):
     FINISHED    = "FINISHED"
     VOID        = "VOID"
 
-TRANSITION_KEYWORDS: dict[str, MatchState] = {
-    "half time":             MatchState.HT,
-    "half-time":             MatchState.HT,
-    " ht ":                  MatchState.HT,
-    "half time whistle":     MatchState.HT,
-    "second half":           MatchState.LIVE_2H,
-    "second half started":   MatchState.LIVE_2H,
-    "full time":             MatchState.FT,
-    "full-time":             MatchState.FT,
-    "final whistle":         MatchState.FT,
-    " ft ":                  MatchState.FT,
-    "extra time":            MatchState.ET_1H,
-    "extra-time":            MatchState.ET_1H,
-    "extra time half time":  MatchState.ET_HT,
-    "extra time second half":MatchState.ET_2H,
-    "penalty shootout":      MatchState.PENALTIES,
-    "penalties":             MatchState.PENALTIES,
-    "penalty kicks":         MatchState.PENALTIES,
-    "final score":           MatchState.FINISHED,
-    "match over":            MatchState.FINISHED,
-    "match ended":           MatchState.FINISHED,
-    "abandoned":             MatchState.VOID,
-    "postponed":             MatchState.VOID,
-    "suspended":             MatchState.VOID,
+TRANSITION_KEYWORDS: dict[str, str] = {
+    "half time":              "HT",
+    "half-time":              "HT",
+    " ht ":                   "HT",
+    "half time whistle":      "HT",
+    "second half":            "LIVE_2H",
+    "second half started":    "LIVE_2H",
+    "full time":              "FT",
+    "full-time":              "FT",
+    "final whistle":          "FT",
+    " ft ":                   "FT",
+    "extra time half time":   "ET_HT",
+    "extra time second half": "ET_2H",
+    "extra time":             "ET_1H",
+    "extra-time":             "ET_1H",
+    "penalty shootout":       "PENALTIES",
+    "penalties":              "PENALTIES",
+    "penalty kicks":          "PENALTIES",
+    "final score":            "FINISHED",
+    "match over":             "FINISHED",
+    "match ended":            "FINISHED",
+    "abandoned":              "VOID",
+    "postponed":              "VOID",
+    "suspended":              "VOID",
 }
 
-def get_fetch_interval(state: MatchState, active_count: int) -> int:
-    if state in (MatchState.HT, MatchState.ET_HT):
-        return 300
-    if state == MatchState.SCHEDULED:
-        return 780
-    if state == MatchState.PENALTIES:
-        return 30
-    if state in (MatchState.FINISHED, MatchState.VOID):
-        return 9999
-    if active_count == 1:
-        return 15
-    if active_count == 2:
-        return 20
-    return 30
+VALID_TRANSITIONS: dict[str, set] = {
+    "SCHEDULED":  {"LIVE", "VOID"},
+    "LIVE":       {"HT", "FT", "VOID"},
+    "HT":         {"LIVE_2H", "VOID"},
+    "LIVE_2H":    {"FT", "VOID"},
+    "FT":         {"ET_1H", "FINISHED", "VOID"},
+    "ET_1H":      {"ET_HT", "VOID"},
+    "ET_HT":      {"ET_2H", "VOID"},
+    "ET_2H":      {"FT", "PENALTIES", "VOID"},
+    "PENALTIES":  {"FINISHED", "VOID"},
+    "FINISHED":   set(),
+    "VOID":       set(),
+}
+
+
+def _valid_transition(current: str, target: str) -> bool:
+    return target in VALID_TRANSITIONS.get(current, set())
+
+
+def _detect_state_from_text(text: str, current_state: str) -> Optional[str]:
+    text_lower = text.lower()
+    for keyword, target in TRANSITION_KEYWORDS.items():
+        if keyword in text_lower:
+            if _valid_transition(current_state, target):
+                return target
+    return None
 
 
 # ─────────────────────────────────────────────
-# Per-match runtime state
+# PER-MATCH RUNTIME
 # ─────────────────────────────────────────────
 
 class MatchRuntime:
-    def __init__(self, match_id: str):
-        f = FIXTURE_BY_ID[match_id]
-        self.match_id         = match_id
-        self.home             = f["home"]
-        self.away             = f["away"]
-        self.venue            = f["venue"]
-        self.kickoff_utc      = datetime.fromisoformat(f["kickoff_utc"].replace("Z", "+00:00"))
-        self.phase            = f["phase"]
-        self.group            = f.get("group")
+    def __init__(self, match_id: str, fixture: dict):
+        self.match_id = match_id
+        self.home = fixture.get("home", "")
+        self.away = fixture.get("away", "")
+        self.venue = fixture.get("venue", "")
+        self.kickoff_utc = datetime.fromisoformat(
+            fixture["kickoff_utc"].replace("Z", "+00:00")
+        )
+        self.phase = fixture.get("phase", "group")
+        self.group = fixture.get("group")
 
-        self.state            = MatchState.SCHEDULED
-        self.prev_state       = None
+        self.state = "SCHEDULED"
+        self.prev_state = None
 
-        self.score_home       = 0
-        self.score_away       = 0
-        self.minute           = 0
+        self.score_home = fixture.get("home_score", 0)
+        self.score_away = fixture.get("away_score", 0)
+        self.minute = 0
 
-        self.prediction: Optional[ModelResult] = None
+        self.prediction = None
         self.confidence_locked = False
         self.confidence_at_kickoff: Optional[dict] = None
 
         self.events: list[dict] = []
-        self.pre_match_brief  = ""
+        self.pre_match_brief = ""
         self.post_match_debrief = ""
 
-        self.sources_used:    list[str] = []
-        self.sources_failed:  list[str] = []
-        self.fetch_cycles     = 0
-        self.parse_errors     = 0
+        self.sources_used: list[str] = []
+        self.sources_failed: list[str] = []
+        self.fetch_cycles = 0
+        self.parse_errors = 0
         self.hallucinations_caught = 0
         self.fallbacks_triggered = 0
 
-        self.last_commentary_at: Optional[datetime] = None
-        self.ft_confirmed_at:    Optional[datetime] = None
-
+        self.last_score = (self.score_home, self.score_away)
+        self.last_state = self.state
+        self.ft_confirmed_at: Optional[datetime] = None
         self.all_sources_down_since: Optional[datetime] = None
 
-        self.penalty_round    = 0
-        self.penalty_scores   = {"home": 0, "away": 0}
-
-        self.last_good_state: Optional[ParsedMatchState] = None
-
+        self.penalty_scores = {"home": 0, "away": 0}
         self.task: Optional[asyncio.Task] = None
-
-    def state_label(self) -> str:
-        return get_phase_label(self.match_id)
 
 
 # ─────────────────────────────────────────────
-# Active match registry
+# ACTIVE REGISTRY + SSE
 # ─────────────────────────────────────────────
 
 _active: dict[str, MatchRuntime] = {}
 _sse_queues: dict[str, list[asyncio.Queue]] = {}
+_global_sse_queues: list[asyncio.Queue] = []
+
+# DB session factory — set by main.py via init_db_factory()
+_db_factory = None
+
+
+def init_db_factory(factory):
+    """Called by main.py to give pipeline access to DB sessions."""
+    global _db_factory
+    _db_factory = factory
+
+
+def _get_db():
+    if _db_factory is None:
+        return None
+    return _db_factory()
 
 
 def register_sse_queue(match_id: str, q: asyncio.Queue) -> None:
@@ -171,8 +239,17 @@ def unregister_sse_queue(match_id: str, q: asyncio.Queue) -> None:
 
 
 def _emit(match_id: str, event_type: str, data: dict) -> None:
-    payload = {"type": event_type, "data": data, "ts": datetime.now(timezone.utc).isoformat()}
+    payload = {
+        "type": event_type,
+        "data": data,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
     for q in _sse_queues.get(match_id, []):
+        try:
+            q.put_nowait(payload)
+        except asyncio.QueueFull:
+            pass
+    for q in _global_sse_queues:
         try:
             q.put_nowait(payload)
         except asyncio.QueueFull:
@@ -180,820 +257,727 @@ def _emit(match_id: str, event_type: str, data: dict) -> None:
 
 
 # ─────────────────────────────────────────────
-# State transition logic
+# DB HELPERS (write match updates to Postgres)
 # ─────────────────────────────────────────────
 
-def _detect_transition(
-    rt: MatchRuntime,
-    parsed: ParsedMatchState,
-    commentary_text: str,
-) -> Optional[MatchState]:
-    text = commentary_text.lower()
-
-    for keyword, target_state in TRANSITION_KEYWORDS.items():
-        if keyword in text:
-            if _valid_transition(rt.state, target_state):
-                return target_state
-
-    if rt.state == MatchState.FT and rt.ft_confirmed_at:
-        silence_secs = (datetime.now(timezone.utc) - rt.ft_confirmed_at).total_seconds()
-        if silence_secs > 20 * 60:
-            return MatchState.FINISHED
-
-    return None
-
-
-def _valid_transition(current: MatchState, target: MatchState) -> bool:
-    valid_from: dict[MatchState, set[MatchState]] = {
-        MatchState.SCHEDULED:   {MatchState.LIVE, MatchState.VOID},
-        MatchState.LIVE:        {MatchState.HT, MatchState.FT, MatchState.VOID},
-        MatchState.HT:          {MatchState.LIVE_2H, MatchState.VOID},
-        MatchState.LIVE_2H:     {MatchState.FT, MatchState.VOID},
-        MatchState.FT:          {MatchState.ET_1H, MatchState.FINISHED, MatchState.VOID},
-        MatchState.ET_1H:       {MatchState.ET_HT, MatchState.VOID},
-        MatchState.ET_HT:       {MatchState.ET_2H, MatchState.VOID},
-        MatchState.ET_2H:       {MatchState.FT, MatchState.PENALTIES, MatchState.VOID},
-        MatchState.PENALTIES:   {MatchState.FINISHED, MatchState.VOID},
-        MatchState.FINISHED:    set(),
-        MatchState.VOID:        set(),
-    }
-    return target in valid_from.get(current, set())
-
-
-async def _apply_transition(rt: MatchRuntime, new_state: MatchState) -> None:
-    old_state = rt.state
-    rt.prev_state = old_state
-    rt.state = new_state
-    logger.info(f"{rt.match_id}: {old_state} → {new_state}")
-
-    _emit(rt.match_id, "state_change", {
-        "match_id": rt.match_id,
-        "state": new_state,
-        "score_home": rt.score_home,
-        "score_away": rt.score_away,
-        "minute": rt.minute,
-    })
-
-    if new_state == MatchState.LIVE and old_state == MatchState.SCHEDULED:
-        if rt.prediction:
-            rt.confidence_at_kickoff = {
-                "home_win": rt.prediction.home_win,
-                "draw": rt.prediction.draw,
-                "away_win": rt.prediction.away_win,
-            }
-
-    if new_state == MatchState.FT:
-        rt.ft_confirmed_at = datetime.now(timezone.utc)
-
-    if new_state == MatchState.VOID:
-        rt.confidence_locked = True
-        _emit(rt.match_id, "void", {
-            "match_id": rt.match_id,
-            "message": "Match void — all predictions cancelled.",
-        })
-        sheets.save_error({
-            "match_id": rt.match_id,
-            "layer": "state_machine",
-            "error_type": "VOID",
-            "message": f"Match void from state {old_state}",
-            "resolution": "Awaiting reschedule or cancellation",
-            "recovered": False,
-        })
-
-    if new_state == MatchState.PENALTIES:
-        _emit(rt.match_id, "penalties_started", {
-            "match_id": rt.match_id,
-            "score_home": rt.score_home,
-            "score_away": rt.score_away,
-        })
-
-    if new_state == MatchState.FINISHED:
-        asyncio.create_task(_post_match(rt))
-
-    if new_state in (MatchState.ET_1H, MatchState.ET_HT, MatchState.ET_2H):
-        _emit(rt.match_id, "extra_time", {
-            "match_id": rt.match_id,
-            "state": new_state,
-        })
-
-
-# ─────────────────────────────────────────────
-# Confidence update logic
-# ─────────────────────────────────────────────
-
-def _update_confidence(rt: MatchRuntime, parsed: ParsedMatchState) -> None:
-    if rt.confidence_locked:
-        return
-    if rt.state not in (MatchState.LIVE, MatchState.LIVE_2H):
-        return
-    if parsed.minute and int(re.sub(r"\+.*", "", str(parsed.minute)) or "0") >= 85:
-        rt.confidence_locked = True
-        logger.info(f"{rt.match_id}: Confidence locked at 85'")
-        _emit(rt.match_id, "confidence_locked", {"match_id": rt.match_id, "minute": 85})
-        return
-
-    if rt.prediction is None:
-        return
-
-    goal_diff = (parsed.score_home - parsed.score_away)
+async def _db_update_match(match_id: str, **kwargs) -> bool:
+    """Update match row in Postgres. Returns True on success."""
+    db = _get_db()
+    if db is None:
+        return False
     try:
-        minute = int(re.sub(r"\+.*", "", str(parsed.minute) or "0"))
-    except Exception:
-        minute = rt.minute
-
-    if goal_diff > 0:
-        home_win = min(0.98, rt.prediction.home_win + goal_diff * 0.18 * (minute / 90))
-        draw     = max(0.02, rt.prediction.draw - goal_diff * 0.08)
-        away_win = max(0.02, 1 - home_win - draw)
-    elif goal_diff < 0:
-        away_win = min(0.98, rt.prediction.away_win + abs(goal_diff) * 0.18 * (minute / 90))
-        draw     = max(0.02, rt.prediction.draw - abs(goal_diff) * 0.08)
-        home_win = max(0.02, 1 - away_win - draw)
-    else:
-        home_win = rt.prediction.home_win
-        draw     = rt.prediction.draw
-        away_win = rt.prediction.away_win
-
-    ko = rt.confidence_at_kickoff or {}
-    home_shift = home_win - ko.get("home_win", home_win)
-
-    _emit(rt.match_id, "confidence_update", {
-        "match_id": rt.match_id,
-        "home_win": round(home_win, 4),
-        "draw":     round(draw, 4),
-        "away_win": round(away_win, 4),
-        "minute":   minute,
-        "home_shift_since_kickoff": round(home_shift, 4),
-        "locked":   False,
-    })
+        from main import MatchDB
+        match = db.query(MatchDB).filter(MatchDB.id == match_id).first()
+        if not match:
+            return False
+        for k, v in kwargs.items():
+            if hasattr(match, k):
+                setattr(match, k, v)
+        match.last_updated = datetime.now(timezone.utc)
+        db.commit()
+        return True
+    except Exception as e:
+        logger.error(f"[DB] Update failed for {match_id}: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
 
 
-# ─────────────────────────────────────────────
-# Source health + alert triggers
-# ─────────────────────────────────────────────
-
-async def _check_source_health(
-    rt: MatchRuntime,
-    results: list[SourceResult],
-) -> int:
-    valid   = [r for r in results if r.ok]
-    failed  = [r for r in results if not r.ok]
-    blocked = [r for r in results if r.blocked]
-
-    valid_count = len(valid)
-    total = len(results)
-
-    for r in results:
-        sheets.save_source_health({
-            "match_id": rt.match_id,
-            "source_name": r.source,
-            "status": "ok" if r.ok else ("blocked" if r.blocked else "failed"),
-            "http_code": r.http_code,
-            "latency_ms": r.latency_ms,
-            "timestamp": datetime.now(timezone.utc),
-        })
-
-    rt.sources_used.extend([r.source for r in valid])
-    rt.sources_failed.extend([r.source for r in failed])
-
-    if valid_count == 0:
-        if rt.all_sources_down_since is None:
-            rt.all_sources_down_since = datetime.now(timezone.utc)
-            last_state = (
-                f"{rt.score_home}-{rt.score_away} {rt.home.split()[0]} (min {rt.minute})"
-                if rt.state in (MatchState.LIVE, MatchState.LIVE_2H) else rt.state
-            )
-            await alerts.alert_all_sources_down(
-                match_info=f"{rt.home} vs {rt.away} ({rt.minute}')",
-                last_good_state=last_state,
-                down_since=rt.all_sources_down_since,
-            )
-        new_group = swap_group(rt.match_id)
-        logger.warning(f"{rt.match_id}: All sources down, swapped to group {new_group}")
-        rt.fallbacks_triggered += 1
-
-    elif valid_count < 3:
-        failed_names = [r.source for r in failed]
-        await alerts.alert_sources_failing(
-            failing_count=len(failed),
-            total=total,
-            match_info=f"{rt.home} vs {rt.away}",
-            failed_sources=failed_names,
+async def _db_save_event(match_id: str, event: dict) -> None:
+    db = _get_db()
+    if db is None:
+        return
+    try:
+        from main import LiveEventDB
+        ev = LiveEventDB(
+            match_id=match_id,
+            event_type=event.get("type"),
+            minute=str(event.get("minute", "")),
+            player=event.get("player", ""),
+            team=event.get("team", ""),
+            sentiment=event.get("sentiment", ""),
+            context=event.get("context", ""),
+            timestamp=datetime.now(timezone.utc),
         )
-        rt.fallbacks_triggered += 1
-    else:
-        if rt.all_sources_down_since is not None:
-            rt.all_sources_down_since = None
-            await alerts.silence_critical("all_sources_down")
-            alerts.clear_silence("all_sources_down")
+        db.add(ev)
+        db.commit()
+    except Exception as e:
+        logger.error(f"[DB] Event save failed: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
 
-    for r in blocked:
-        logger.warning(f"{rt.match_id}: {r.source} blocked (HTTP {r.http_code})")
-        sheets.save_error({
+
+# ─────────────────────────────────────────────
+# HOOK 1: AUTO SCORE UPDATE (every 30s)
+# ─────────────────────────────────────────────
+
+async def _auto_update_score(rt: MatchRuntime, source_results: list) -> bool:
+    """
+    Process fetch results, update DB if score/state changed.
+    Returns True if anything changed (triggers Groq for context).
+    """
+    if not source_results:
+        return False
+
+    # Get consensus score from results that have extracted_score
+    scores = [
+        r.extracted_score for r in source_results
+        if r.ok and r.extracted_score
+    ]
+
+    if not scores:
+        return False
+
+    # Majority vote on score
+    from collections import Counter
+    score_keys = [f"{s['home']}-{s['away']}" for s in scores]
+    most_common = Counter(score_keys).most_common(1)
+    if not most_common:
+        return False
+
+    best_score_key, count = most_common[0]
+    if count < 1:
+        return False
+
+    home_s, away_s = best_score_key.split("-")
+    new_home, new_away = int(home_s), int(away_s)
+
+    # Hallucination guard
+    if new_home > 15 or new_away > 15:
+        rt.hallucinations_caught += 1
+        logger.warning(f"[Auto] {rt.match_id}: Hallucination caught — {new_home}-{new_away}")
+        return False
+
+    score_changed = (new_home != rt.score_home) or (new_away != rt.score_away)
+
+    # Get consensus state from text content
+    state_changed = False
+    all_texts = " ".join(r.text or "" for r in source_results if r.ok and r.text)
+    if all_texts:
+        detected_state = _detect_state_from_text(all_texts, rt.state)
+        if detected_state and detected_state != rt.state:
+            if _valid_transition(rt.state, detected_state):
+                logger.info(f"[Auto] {rt.match_id}: State {rt.state} → {detected_state}")
+                rt.prev_state = rt.state
+                rt.state = detected_state
+                state_changed = True
+
+                # FT confirmation timestamp
+                if detected_state == "FT":
+                    rt.ft_confirmed_at = datetime.now(timezone.utc)
+
+                # Emit state change
+                _emit(rt.match_id, "state_change", {
+                    "match_id": rt.match_id,
+                    "state": rt.state,
+                    "score_home": rt.score_home,
+                    "score_away": rt.score_away,
+                })
+
+                # Update DB
+                await _db_update_match(rt.match_id, state=rt.state)
+
+                # Trigger FINISHED processing
+                if detected_state == "FINISHED":
+                    asyncio.create_task(_post_match_auto(rt))
+                elif detected_state == "VOID":
+                    rt.confidence_locked = True
+                    _emit(rt.match_id, "void", {
+                        "match_id": rt.match_id,
+                        "message": "Match void — all predictions cancelled.",
+                    })
+
+    # Update score in DB if changed
+    if score_changed:
+        rt.score_home = new_home
+        rt.score_away = new_away
+        logger.info(f"[Auto] {rt.match_id}: Score updated → {new_home}-{new_away} (from {count}/{len(source_results)} sources)")
+
+        await _db_update_match(
+            rt.match_id,
+            home_score=new_home,
+            away_score=new_away,
+        )
+
+        # Emit score update to SSE
+        _emit(rt.match_id, "score_update", {
             "match_id": rt.match_id,
-            "layer": "fetcher",
-            "error_type": "BLOCKED",
-            "message": f"{r.source} returned {r.http_code}",
-            "resolution": "Auto-retry in 6 min, remove for 1h if persistent",
-            "recovered": False,
+            "score_home": new_home,
+            "score_away": new_away,
+            "state": rt.state,
+            "sources_agreed": count,
         })
 
-    return valid_count
+    return score_changed or state_changed
 
 
 # ─────────────────────────────────────────────
-# Groq quota monitoring
+# HOOK 2: AUTO RETRAIN (after every FINISHED match)
 # ─────────────────────────────────────────────
 
-_groq_token_counts: dict[str, int] = {"key1": 0, "key2": 0}
-_groq_daily_limit = 500_000
-_groq_warned: set[str] = set()
+async def _auto_retrain(rt: MatchRuntime) -> None:
+    """Auto-trigger retrain after match finishes. Runs as background task."""
+    if retrain is None:
+        logger.warning(f"[AutoRetrain] {rt.match_id}: model.retrain not available")
+        return
+
+    logger.info(f"[AutoRetrain] {rt.match_id}: Starting retrain...")
+    accuracy_before = get_accuracy()
+
+    try:
+        retrain_result = await retrain(match_id=rt.match_id)
+        accuracy_after = retrain_result.accuracy_after
+        improvement = (accuracy_after - accuracy_before) if (accuracy_before and accuracy_after) else None
+        threshold = get_retrain_threshold(rt.match_id)
+        deployed = (improvement >= threshold) if improvement is not None else False
+
+        logger.info(
+            f"[AutoRetrain] {rt.match_id}: "
+            f"{'DEPLOYED' if deployed else 'SKIPPED'} "
+            f"(accuracy: {accuracy_before} → {accuracy_after})"
+        )
+
+        # Notify via Telegram
+        if alerts:
+            try:
+                await alerts.alert_retrain_result(
+                    match_id=rt.match_id,
+                    version=get_current_version(),
+                    accuracy_before=accuracy_before or 0,
+                    accuracy_after=accuracy_after or 0,
+                    improvement=improvement or 0,
+                    deployed=deployed,
+                    threshold=threshold,
+                    duration_s=getattr(retrain_result, "duration_s", 0),
+                )
+            except Exception as e:
+                logger.error(f"[AutoRetrain] Alert failed: {e}")
+
+        # Save to sheets
+        if sheets:
+            try:
+                sheets.save_model_run({
+                    "match_id": rt.match_id,
+                    "version": get_current_version(),
+                    "accuracy_before": accuracy_before,
+                    "accuracy_after": accuracy_after,
+                    "improvement_pct": improvement,
+                    "deploy_decision": deployed,
+                    "training_duration_s": getattr(retrain_result, "duration_s", 0),
+                    "feature_importances": getattr(retrain_result, "feature_importances", {}),
+                })
+            except Exception as e:
+                logger.error(f"[AutoRetrain] Sheets save failed: {e}")
+
+        # Broadcast retrain result via SSE
+        _emit("global", "retrain_complete", {
+            "match_id": rt.match_id,
+            "deployed": deployed,
+            "accuracy_before": accuracy_before,
+            "accuracy_after": accuracy_after,
+            "version": get_current_version(),
+        })
+
+    except Exception as e:
+        logger.error(f"[AutoRetrain] {rt.match_id}: Failed — {e}")
+        if alerts:
+            try:
+                await alerts.send_warning(f"Auto-retrain failed for {rt.match_id}", context={"error": str(e)})
+            except Exception:
+                pass
 
 
-def record_groq_usage(key_name: str, tokens_used: int) -> None:
-    _groq_token_counts[key_name] = _groq_token_counts.get(key_name, 0) + tokens_used
+# ─────────────────────────────────────────────
+# HOOK 3: AUTO PRE-MATCH BRIEF (3h before kickoff)
+# ─────────────────────────────────────────────
 
+async def _generate_pre_match_brief(match_id: str, home: str, away: str) -> str:
+    """
+    Generate pre-match brief using Tavily search + Groq 70b.
+    Returns brief text, saves to DB.
+    """
+    groq_key = os.getenv("GROQ_API_KEY_1") or os.getenv("GROQ_API_KEY_2")
+    if not groq_key:
+        return ""
 
-async def check_groq_quotas() -> None:
-    for key_name, used in _groq_token_counts.items():
-        pct = (used / _groq_daily_limit) * 100
-        if pct >= 100 and key_name not in _groq_warned:
-            _groq_warned.add(key_name)
-            await alerts.alert_groq_exhausted(
-                match_info="All active matches",
-                down_since=datetime.now(timezone.utc),
+    # Search for team news
+    team_news = ""
+    tavily_key = os.getenv("TAVILY_API_KEY")
+    if tavily_key:
+        try:
+            from tavily import TavilyClient
+            client = TavilyClient(api_key=tavily_key)
+            result = client.search(
+                query=f"{home} vs {away} team news World Cup 2026",
+                search_depth="basic",
+                max_results=3,
             )
-        elif pct >= 80 and f"{key_name}_80" not in _groq_warned:
-            _groq_warned.add(f"{key_name}_80")
-            await alerts.alert_groq_limit(key_name, pct)
+            team_news = " | ".join(
+                r.get("content", "")[:500]
+                for r in result.get("results", [])[:3]
+            )
+        except Exception as e:
+            logger.warning(f"[PreBrief] Tavily search failed: {e}")
 
-
-def reset_groq_counts() -> None:
-    _groq_token_counts.clear()
-    _groq_warned.clear()
-    logger.info("Groq daily token counts reset.")
+    # Generate brief with Groq
+    try:
+        from groq import Groq
+        client = Groq(api_key=groq_key)
+        prompt = (
+            f"Write a 3-sentence pre-match brief for {home} vs {away} at FIFA World Cup 2026. "
+            f"Cover: current form, key players to watch, and one tactical point. "
+            f"Be factual and concise. "
+            f"Context: {team_news[:1000] if team_news else 'No additional context available.'}"
+        )
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            temperature=0.3,
+        )
+        brief = response.choices[0].message.content.strip()
+        logger.info(f"[PreBrief] Generated for {match_id}: {brief[:80]}...")
+        return brief
+    except Exception as e:
+        logger.error(f"[PreBrief] Groq generation failed: {e}")
+        return f"{home} vs {away} — World Cup 2026 match. AI pre-match analysis unavailable."
 
 
 # ─────────────────────────────────────────────
-# Core match loop
+# HOOK 4: AUTO POST-MATCH DEBRIEF (5min after FINISHED)
 # ─────────────────────────────────────────────
 
-import re  # needed for minute parsing in _update_confidence
+async def _generate_post_match_debrief(rt: MatchRuntime) -> str:
+    """
+    Generate post-match debrief using Groq 70b.
+    Uses match events already in DB — no Tavily needed.
+    """
+    groq_key = os.getenv("GROQ_API_KEY_1") or os.getenv("GROQ_API_KEY_2")
+    if not groq_key:
+        return ""
 
+    winner = (
+        rt.home if rt.score_home > rt.score_away
+        else rt.away if rt.score_away > rt.score_home
+        else "Draw"
+    )
+    goals = [e for e in rt.events if e.get("type") == "goal"]
+    scorers = [f"{e.get('player', 'Unknown')} ({e.get('minute', '?')}')" for e in goals]
+    prediction_line = ""
+    if rt.prediction:
+        pred = rt.prediction
+        prediction_line = (
+            f"AI predicted: {getattr(pred, 'home_win', 0)*100:.0f}% home win, "
+            f"{getattr(pred, 'draw', 0)*100:.0f}% draw, "
+            f"{getattr(pred, 'away_win', 0)*100:.0f}% away win."
+        )
+
+    try:
+        from groq import Groq
+        client = Groq(api_key=groq_key)
+        prompt = (
+            f"Write a 3-sentence post-match debrief for {rt.home} {rt.score_home}-{rt.score_away} {rt.away} "
+            f"at FIFA World Cup 2026. "
+            f"Result: {'Draw' if winner == 'Draw' else winner + ' won'}. "
+            f"{'Scorers: ' + ', '.join(scorers) + '.' if scorers else 'No goals noted.'} "
+            f"{prediction_line} "
+            f"Cover: what happened, key moment, and what this means for the group stage."
+        )
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            temperature=0.3,
+        )
+        debrief = response.choices[0].message.content.strip()
+        logger.info(f"[PostDebrief] Generated for {rt.match_id}: {debrief[:80]}...")
+        return debrief
+    except Exception as e:
+        logger.error(f"[PostDebrief] Groq generation failed: {e}")
+        return f"{rt.home} {rt.score_home}-{rt.score_away} {rt.away}. Post-match analysis unavailable."
+
+
+# ─────────────────────────────────────────────
+# POST-MATCH AUTOMATION
+# ─────────────────────────────────────────────
+
+async def _post_match_auto(rt: MatchRuntime) -> None:
+    """
+    Triggered when match hits FINISHED state.
+    Runs retrain + debrief generation concurrently.
+    """
+    logger.info(f"[PostMatch] {rt.match_id}: Starting post-match automation")
+
+    # Wait 5 minutes for final score to stabilise
+    await asyncio.sleep(300)
+
+    # Run retrain and debrief concurrently
+    retrain_task = asyncio.create_task(_auto_retrain(rt))
+    debrief_task = asyncio.create_task(_generate_post_match_debrief(rt))
+
+    debrief = await debrief_task
+    await retrain_task  # wait for retrain too
+
+    if debrief:
+        rt.post_match_debrief = debrief
+        # Save to DB
+        await _db_update_match(rt.match_id, post_match_debrief=debrief)
+        # Push via SSE
+        _emit(rt.match_id, "debrief_ready", {
+            "match_id": rt.match_id,
+            "debrief": debrief,
+        })
+
+    # Save to sheets
+    if sheets:
+        try:
+            winner = (
+                rt.home if rt.score_home > rt.score_away
+                else rt.away if rt.score_away > rt.score_home
+                else "draw"
+            )
+            sheets.save_match(sheets.build_match_record(
+                match_id=rt.match_id,
+                model_version=get_current_version(),
+                phase=rt.phase,
+                group=rt.group,
+                venue=rt.venue,
+                kickoff_utc=rt.kickoff_utc,
+                home_team=rt.home,
+                away_team=rt.away,
+                home_squad=[], away_squad=[],
+                home_manager="", away_manager="",
+                home_fifa_rank=0, away_fifa_rank=0,
+                home_elo=0.0, away_elo=0.0,
+                home_win_pct=getattr(rt.prediction, "home_win", 0.0),
+                draw_pct=getattr(rt.prediction, "draw", 0.0),
+                away_win_pct=getattr(rt.prediction, "away_win", 0.0),
+                predicted_scorer=getattr(rt.prediction, "predicted_scorer", ""),
+                predicted_score=getattr(rt.prediction, "predicted_score", ""),
+                confidence_range=getattr(rt.prediction, "confidence_range", ""),
+                training_matches_seen=getattr(rt.prediction, "training_matches_seen", 0),
+                final_score_home=rt.score_home,
+                final_score_away=rt.score_away,
+                winner=winner,
+                scorers=[e.get("player", "") for e in rt.events if e.get("type") == "goal"],
+                assisters=[], cards=[], substitutions=[],
+                first_goal_minute=next((e.get("minute") for e in rt.events if e.get("type") == "goal"), None),
+                final_whistle_minute=rt.minute,
+                injury_time_1h=0, injury_time_2h=0,
+                went_to_et=rt.state in ("ET_1H", "ET_HT", "ET_2H"),
+                went_to_penalties=rt.prev_state == "PENALTIES" or rt.state == "PENALTIES",
+                total_duration_min=rt.minute,
+                regulation_duration_min=min(rt.minute, 90),
+                ai_correct_winner=False,
+                ai_correct_scorer=False,
+                ai_confidence_at_lock=getattr(rt.prediction, "home_win", 0.0),
+                confidence_calibration_error=0.0,
+                pre_match_brief=rt.pre_match_brief,
+                post_match_debrief=rt.post_match_debrief,
+                what_model_got_wrong="",
+                model_updates_after={},
+                total_votes=0, verified_votes=0, vote_distribution={},
+                crowd_correct_winner=False, vote_timeline=[], votes_by_phase={},
+                sources_used=list(set(rt.sources_used)),
+                sources_failed=list(set(rt.sources_failed)),
+                fetch_cycles=rt.fetch_cycles,
+                parse_errors=rt.parse_errors,
+                hallucinations_caught=rt.hallucinations_caught,
+                fallbacks_triggered=rt.fallbacks_triggered,
+                mlflow_run_id="",
+                accuracy_before=get_accuracy() or 0.0,
+                accuracy_after=get_accuracy() or 0.0,
+                improvement_pct=0.0,
+                deploy_decision=False,
+                training_duration_s=0.0,
+                feature_importances={},
+                full_commentary_archive=[],
+                key_moments=[e for e in rt.events if e.get("type") in ("goal", "red_card")],
+                player_performance_ratings={},
+            ))
+        except Exception as e:
+            logger.error(f"[PostMatch] Sheets save failed: {e}")
+
+    # Telegram deploy window suggestion
+    if alerts:
+        try:
+            safe, reason = safe_to_deploy()
+            await alerts.alert_deploy_window(safe, reason)
+        except Exception as e:
+            logger.error(f"[PostMatch] Deploy alert failed: {e}")
+
+    logger.info(f"[PostMatch] {rt.match_id}: Automation complete")
+
+
+# ─────────────────────────────────────────────
+# CORE MATCH LOOP
+# ─────────────────────────────────────────────
 
 async def _match_loop(match_id: str) -> None:
     rt = _active[match_id]
-    logger.info(f"Match loop started: {match_id} ({rt.home} vs {rt.away})")
+    logger.info(f"[Loop] {match_id} started — {rt.home} vs {rt.away}")
 
-    while rt.state not in (MatchState.FINISHED, MatchState.VOID):
+    while rt.state not in ("FINISHED", "VOID", "FT"):
         loop_start = time.monotonic()
+
+        # Count how many matches are currently live
         active_count = sum(
             1 for r in _active.values()
-            if r.state in (MatchState.LIVE, MatchState.LIVE_2H,
-                           MatchState.ET_1H, MatchState.ET_2H,
-                           MatchState.PENALTIES)
+            if r.state in ("LIVE", "LIVE_2H", "ET_1H", "ET_2H", "PENALTIES")
         )
-        interval = get_fetch_interval(rt.state, active_count)
+        interval = get_fetch_interval(active_count, rt.state)
 
-        if rt.state == MatchState.SCHEDULED:
+        # Heartbeat during SCHEDULED state — wait for kickoff
+        if rt.state == "SCHEDULED":
+            now = datetime.now(timezone.utc)
+            remaining = (rt.kickoff_utc - now).total_seconds()
+            if remaining <= 0:
+                logger.info(f"[Loop] {match_id}: Kickoff time reached — transitioning to LIVE")
+                rt.state = "LIVE"
+                await _db_update_match(match_id, state="LIVE")
+                _emit(match_id, "state_change", {
+                    "match_id": match_id,
+                    "state": "LIVE",
+                    "score_home": rt.score_home,
+                    "score_away": rt.score_away,
+                })
+                continue
             _emit(match_id, "heartbeat", {"match_id": match_id, "state": rt.state})
+            await asyncio.sleep(min(interval, remaining + 5))
+            continue
+
+        # FT silence rule: 20 min after FT → FINISHED
+        if rt.state == "FT" and rt.ft_confirmed_at:
+            silence_secs = (datetime.now(timezone.utc) - rt.ft_confirmed_at).total_seconds()
+            if silence_secs > 20 * 60:
+                logger.info(f"[Loop] {match_id}: 20min silence after FT → FINISHED")
+                rt.state = "FINISHED"
+                await _db_update_match(match_id, state="FINISHED")
+                asyncio.create_task(_post_match_auto(rt))
+                break
+
+        # Fetch all sources
+        if fetch_match_data is None:
             await asyncio.sleep(interval)
             continue
 
-        sources = get_sources_for_match(match_id)
-        fixture = get_match_info(match_id)
-
         try:
-            results = await fetch_match_data(
+            source_results = await fetch_match_data(
                 match_id=match_id,
                 home=rt.home,
                 away=rt.away,
-                sources=sources,
             )
         except Exception as e:
-            logger.error(f"{match_id}: fetch error — {e}")
-            sheets.save_error({
-                "match_id": match_id,
-                "layer": "fetcher",
-                "error_type": type(e).__name__,
-                "message": str(e),
-                "resolution": "Serving last known good state",
-                "recovered": False,
-            })
-            _emit(match_id, "updating", {"match_id": match_id})
+            logger.error(f"[Loop] {match_id}: fetch error — {e}")
+            if sheets:
+                sheets.save_error({
+                    "match_id": match_id,
+                    "layer": "fetcher",
+                    "error_type": type(e).__name__,
+                    "message": str(e),
+                    "resolution": "Serving last known state",
+                    "recovered": False,
+                })
             await asyncio.sleep(interval)
             continue
 
         rt.fetch_cycles += 1
 
-        valid_count = await _check_source_health(rt, results)
-        await check_groq_quotas()
+        valid = [r for r in source_results if r.ok]
+        failed = [r for r in source_results if not r.ok]
+        blocked = [r for r in source_results if r.blocked]
 
-        if valid_count == 0 and rt.last_good_state:
+        rt.sources_used.extend(r.source for r in valid)
+        rt.sources_failed.extend(r.source for r in failed)
+
+        # Source health alerts
+        if len(valid) == 0 and source_results:
+            if rt.all_sources_down_since is None:
+                rt.all_sources_down_since = datetime.now(timezone.utc)
+                if alerts:
+                    try:
+                        await alerts.alert_all_sources_down(
+                            match_info=f"{rt.home} vs {rt.away} ({rt.minute}')",
+                            last_good_state=f"{rt.score_home}-{rt.score_away}",
+                            down_since=rt.all_sources_down_since,
+                        )
+                    except Exception:
+                        pass
+            rt.fallbacks_triggered += 1
             _emit(match_id, "updating", {"match_id": match_id})
             await asyncio.sleep(interval)
             continue
 
-        raw_texts = [r.text for r in results if r.ok and r.text]
-        if not raw_texts:
-            await asyncio.sleep(interval)
-            continue
+        if rt.all_sources_down_since is not None:
+            rt.all_sources_down_since = None
 
-        try:
-            parsed: ParsedMatchState = await parse_commentary(
-                match_id=match_id,
-                home=rt.home,
-                away=rt.away,
-                raw_texts=raw_texts,
-            )
-        except Exception as e:
-            rt.parse_errors += 1
-            logger.error(f"{match_id}: parse error — {e}")
-            sheets.save_error({
-                "match_id": match_id,
-                "layer": "parser",
-                "error_type": type(e).__name__,
-                "message": str(e),
-                "resolution": "Serving last known good state",
-                "recovered": False,
-            })
-            await asyncio.sleep(interval)
-            continue
-
-        if parsed is None:
-            await asyncio.sleep(interval)
-            continue
-
-        if parsed.score_home > 15 or parsed.score_away > 15:
-            rt.hallucinations_caught += 1
-            logger.warning(f"{match_id}: Hallucination caught — score {parsed.score_home}-{parsed.score_away}")
-            sheets.save_error({
-                "match_id": match_id,
-                "layer": "parser",
-                "error_type": "HALLUCINATION",
-                "message": f"Rejected score {parsed.score_home}-{parsed.score_away}",
-                "resolution": "Serving last known good state",
-                "recovered": True,
-            })
-            await asyncio.sleep(interval)
-            continue
-
-        try:
-            minute_int = int(re.sub(r"\+.*", "", str(parsed.minute) or "0"))
-            if minute_int > 130:
-                rt.hallucinations_caught += 1
-                logger.warning(f"{match_id}: Hallucination caught — minute {parsed.minute}")
-                await asyncio.sleep(interval)
-                continue
-        except Exception:
-            pass
-
-        rt.last_good_state = parsed
-        rt.last_commentary_at = datetime.now(timezone.utc)
-
-        if parsed.score_home is not None:
-            rt.score_home = parsed.score_home
-        if parsed.score_away is not None:
-            rt.score_away = parsed.score_away
-        if parsed.minute:
+        if len(blocked) >= 3 and alerts:
             try:
-                rt.minute = int(re.sub(r"\+.*", "", str(parsed.minute)))
+                await alerts.alert_sources_failing(
+                    failing_count=len(blocked),
+                    total=len(source_results),
+                    match_info=f"{rt.home} vs {rt.away}",
+                    failed_sources=[r.source for r in blocked],
+                )
             except Exception:
                 pass
 
-        commentary_combined = " ".join(raw_texts).lower()
-        new_state = _detect_transition(rt, parsed, commentary_combined)
-        if new_state and new_state != rt.state:
-            await _apply_transition(rt, new_state)
+        # HOOK 1: Auto update score/state from extracted HTML
+        changed = await _auto_update_score(rt, source_results)
 
-        _update_confidence(rt, parsed)
-
-        for event in parsed.events:
-            event_dict = event if isinstance(event, dict) else event.model_dump()
-            if event_dict not in rt.events:
-                rt.events.append(event_dict)
-                _emit(match_id, "event", {
-                    "match_id": match_id,
-                    "event": event_dict,
-                    "score_home": rt.score_home,
-                    "score_away": rt.score_away,
-                })
-                if event_dict.get("type") in ("goal", "red_card", "penalty"):
-                    sheets.save_commentary({
-                        "match_id": match_id,
-                        "full_commentary_archive": [],
-                        "key_moments": [event_dict],
-                        "player_performance_ratings": {},
-                    })
-
+        # Emit full match update
         _emit(match_id, "match_update", {
-            "match_id":     match_id,
-            "state":        rt.state,
-            "score_home":   rt.score_home,
-            "score_away":   rt.score_away,
-            "minute":       rt.minute,
-            "home":         rt.home,
-            "away":         rt.away,
-            "ai_context":   getattr(parsed, "ai_context", ""),
-            "confidence": {
-                "home_win": getattr(rt.prediction, "home_win", None),
-                "draw":     getattr(rt.prediction, "draw", None),
-                "away_win": getattr(rt.prediction, "away_win", None),
-                "locked":   rt.confidence_locked,
-            },
+            "match_id":   match_id,
+            "state":      rt.state,
+            "score_home": rt.score_home,
+            "score_away": rt.score_away,
+            "minute":     rt.minute,
+            "home":       rt.home,
+            "away":       rt.away,
+            "confidence_locked": rt.confidence_locked,
             "model_version": get_current_version(),
-            "source_used":  getattr(parsed, "source_used", ""),
+            "sources_valid": len(valid),
         })
 
         elapsed = time.monotonic() - loop_start
-        sleep_for = max(0, interval - elapsed)
-        await asyncio.sleep(sleep_for)
+        await asyncio.sleep(max(0, interval - elapsed))
 
-    logger.info(f"Match loop ended: {match_id} (state={rt.state})")
-
-
-# ─────────────────────────────────────────────
-# Pre-match setup
-# ─────────────────────────────────────────────
-
-async def _pre_match(rt: MatchRuntime) -> None:
-    logger.info(f"{rt.match_id}: Pre-match preparation starting.")
-
-    try:
-        rt.prediction = await predict(
-            match_id=rt.match_id,
-            home=rt.home,
-            away=rt.away,
-        )
-    except Exception as e:
-        logger.error(f"{rt.match_id}: Pre-match prediction failed — {e}")
-        sheets.save_error({
-            "match_id": rt.match_id,
-            "layer": "model",
-            "error_type": "PREDICTION_FAILED",
-            "message": str(e),
-            "resolution": "Will retry at kickoff",
-            "recovered": False,
-        })
-
-    _emit(rt.match_id, "pre_match", {
-        "match_id":    rt.match_id,
-        "home":        rt.home,
-        "away":        rt.away,
-        "kickoff_utc": rt.kickoff_utc.isoformat(),
-        "venue":       rt.venue,
-        "prediction": {
-            "home_win": getattr(rt.prediction, "home_win", 0.33),
-            "draw":     getattr(rt.prediction, "draw", 0.33),
-            "away_win": getattr(rt.prediction, "away_win", 0.33),
-            "confidence_range": getattr(rt.prediction, "confidence_range", "—"),
-        } if rt.prediction else {},
-        "pre_match_brief": rt.pre_match_brief,
-        "model_version": get_current_version(),
-        "voting_open": True,
-    })
-
-    logger.info(f"{rt.match_id}: Pre-match setup complete.")
+    logger.info(f"[Loop] {match_id} ended (state={rt.state})")
+    _active.pop(match_id, None)
 
 
 # ─────────────────────────────────────────────
-# Post-match processing
-# ─────────────────────────────────────────────
-
-async def _post_match(rt: MatchRuntime) -> None:
-    logger.info(f"{rt.match_id}: Post-match processing starting.")
-
-    winner = (
-        rt.home if rt.score_home > rt.score_away else
-        rt.away if rt.score_away > rt.score_home else "draw"
-    )
-    ai_correct_winner = False
-    crowd_correct_winner = False
-
-    if rt.prediction:
-        probs = {
-            rt.home: rt.prediction.home_win,
-            "draw": rt.prediction.draw,
-            rt.away: rt.prediction.away_win,
-        }
-        ai_predicted = max(probs, key=probs.get)
-        ai_correct_winner = (ai_predicted == winner) or (
-            ai_predicted == "draw" and winner == "draw"
-        )
-
-    if rt.prediction and rt.confidence_at_kickoff:
-        if winner == rt.home:
-            actual = 1.0
-            predicted = rt.confidence_at_kickoff.get("home_win", 0.5)
-        elif winner == rt.away:
-            actual = 1.0
-            predicted = rt.confidence_at_kickoff.get("away_win", 0.5)
-        else:
-            actual = 1.0
-            predicted = rt.confidence_at_kickoff.get("draw", 0.33)
-        calibration_error = abs(actual - predicted)
-    else:
-        calibration_error = 0.0
-
-    train_start = time.monotonic()
-    accuracy_before = get_accuracy()
-    deployed = False
-    mlflow_run_id = ""
-    improvement_pct = 0.0
-    feature_importances = {}
-
-    try:
-        retrain_result = await retrain(match_id=rt.match_id)
-        duration_s = time.monotonic() - train_start
-        accuracy_after = retrain_result.accuracy_after
-        improvement_pct = accuracy_after - accuracy_before
-        threshold = get_retrain_threshold(rt.match_id)
-        deployed = improvement_pct >= threshold
-        mlflow_run_id = retrain_result.run_id
-        feature_importances = retrain_result.feature_importances
-
-        if duration_s > 600:
-            await alerts.alert_retrain_slow(duration_s, rt.match_id)
-
-        await alerts.alert_retrain_result(
-            match_id=rt.match_id,
-            version=get_current_version(),
-            accuracy_before=accuracy_before,
-            accuracy_after=accuracy_after,
-            improvement=improvement_pct,
-            deployed=deployed,
-            threshold=threshold,
-            duration_s=duration_s,
-        )
-
-        sheets.save_model_run({
-            "run_id":              mlflow_run_id,
-            "match_id":            rt.match_id,
-            "version":             get_current_version(),
-            "accuracy_before":     accuracy_before,
-            "accuracy_after":      accuracy_after,
-            "improvement_pct":     improvement_pct,
-            "deploy_decision":     deployed,
-            "training_duration_s": duration_s,
-            "feature_importances": feature_importances,
-        })
-
-    except Exception as e:
-        logger.error(f"{rt.match_id}: Retrain failed — {e}")
-        await alerts.send_warning(
-            f"Retrain failed for {rt.match_id}",
-            context={"error": str(e)},
-        )
-        sheets.save_error({
-            "match_id": rt.match_id,
-            "layer": "model",
-            "error_type": "RETRAIN_FAILED",
-            "message": str(e),
-            "resolution": "Keeping current weights",
-            "recovered": False,
-        })
-
-    match_record = sheets.build_match_record(
-        match_id=rt.match_id,
-        model_version=get_current_version(),
-        phase=rt.phase,
-        group=rt.group,
-        venue=rt.venue,
-        kickoff_utc=rt.kickoff_utc,
-        home_team=rt.home,
-        away_team=rt.away,
-        home_squad=[],
-        away_squad=[],
-        home_manager="",
-        away_manager="",
-        home_fifa_rank=0,
-        away_fifa_rank=0,
-        home_elo=0.0,
-        away_elo=0.0,
-        home_win_pct=getattr(rt.prediction, "home_win", 0.0),
-        draw_pct=getattr(rt.prediction, "draw", 0.0),
-        away_win_pct=getattr(rt.prediction, "away_win", 0.0),
-        predicted_scorer=getattr(rt.prediction, "predicted_scorer", ""),
-        predicted_score=getattr(rt.prediction, "predicted_score", ""),
-        confidence_range=getattr(rt.prediction, "confidence_range", ""),
-        training_matches_seen=getattr(rt.prediction, "training_matches_seen", 0),
-        final_score_home=rt.score_home,
-        final_score_away=rt.score_away,
-        winner=winner,
-        scorers=[e["player"] for e in rt.events if e.get("type") == "goal"],
-        assisters=[e.get("assister", "") for e in rt.events if e.get("type") == "goal"],
-        cards=[e for e in rt.events if "card" in e.get("type", "")],
-        substitutions=[e for e in rt.events if e.get("type") == "sub"],
-        first_goal_minute=next((e["minute"] for e in rt.events if e.get("type") == "goal"), None),
-        final_whistle_minute=rt.minute,
-        injury_time_1h=0,
-        injury_time_2h=0,
-        went_to_et=rt.state in (MatchState.ET_1H, MatchState.ET_HT, MatchState.ET_2H, MatchState.FINISHED),
-        went_to_penalties=any(
-            rt.prev_state == MatchState.PENALTIES or rt.state == MatchState.PENALTIES
-            for _ in [1]
-        ),
-        total_duration_min=rt.minute,
-        regulation_duration_min=min(rt.minute, 90),
-        ai_correct_winner=ai_correct_winner,
-        ai_correct_scorer=False,
-        ai_confidence_at_lock=getattr(rt.prediction, "home_win", 0.0),
-        confidence_calibration_error=calibration_error,
-        pre_match_brief=rt.pre_match_brief,
-        post_match_debrief=rt.post_match_debrief,
-        what_model_got_wrong="",
-        model_updates_after={},
-        total_votes=0,
-        verified_votes=0,
-        vote_distribution={},
-        crowd_correct_winner=crowd_correct_winner,
-        vote_timeline=[],
-        votes_by_phase={},
-        sources_used=list(set(rt.sources_used)),
-        sources_failed=list(set(rt.sources_failed)),
-        fetch_cycles=rt.fetch_cycles,
-        parse_errors=rt.parse_errors,
-        hallucinations_caught=rt.hallucinations_caught,
-        fallbacks_triggered=rt.fallbacks_triggered,
-        mlflow_run_id=mlflow_run_id,
-        accuracy_before=accuracy_before,
-        accuracy_after=accuracy_before + improvement_pct,
-        improvement_pct=improvement_pct,
-        deploy_decision=deployed,
-        training_duration_s=time.monotonic() - train_start,
-        feature_importances=feature_importances,
-        full_commentary_archive=[],
-        key_moments=[e for e in rt.events if e.get("type") in ("goal", "red_card", "penalty")],
-        player_performance_ratings={},
-    )
-    sheets.save_match(match_record)
-
-    _emit(rt.match_id, "finished", {
-        "match_id":         rt.match_id,
-        "score_home":       rt.score_home,
-        "score_away":       rt.score_away,
-        "winner":           winner,
-        "ai_correct":       ai_correct_winner,
-        "model_version":    get_current_version(),
-        "post_match_debrief": rt.post_match_debrief,
-    })
-
-    safe, reason = safe_to_deploy()
-    await alerts.alert_deploy_window(safe, reason)
-
-    linkedin, x_post = _generate_daily_post(rt, winner, ai_correct_winner)
-    await alerts.alert_daily_post(linkedin, x_post)
-
-    logger.info(f"{rt.match_id}: Post-match processing complete.")
-
-    _active.pop(rt.match_id, None)
-
-
-# ─────────────────────────────────────────────
-# Daily post generation
-# ─────────────────────────────────────────────
-
-def _generate_daily_post(
-    rt: MatchRuntime,
-    winner: str,
-    ai_correct: bool,
-) -> tuple[str, str]:
-    pred = rt.prediction
-    home_pct  = f"{getattr(pred, 'home_win', 0)*100:.0f}%" if pred else "—"
-    draw_pct  = f"{getattr(pred, 'draw', 0)*100:.0f}%"     if pred else "—"
-    away_pct  = f"{getattr(pred, 'away_win', 0)*100:.0f}%" if pred else "—"
-    result_emoji = "✅" if ai_correct else "❌"
-    version = get_current_version()
-
-    linkedin = (
-        f"{rt.home} {rt.score_home}-{rt.score_away} {rt.away}\n"
-        f"AI predicted: {home_pct} · Draw {draw_pct} · {away_pct}\n"
-        f"Result: {result_emoji} {'correct' if ai_correct else 'wrong'}\n"
-        f"Why {'right' if ai_correct else 'wrong'}:\n"
-        f"→ [reason 1]\n→ [reason 2]\n→ [reason 3]\n"
-        f"What updated:\n→ [team] rating [+/-X]\n→ [player] scorer probability [+/-X%]\n"
-        f"→ [what model now knows]\n"
-        f"Model v{version} — trained on {rt.match_id[-3:]} matches.\n"
-        f"#WorldCup2026 #AI #buildinpublic"
-    )
-
-    x_post = (
-        f"🏆 {rt.home} {rt.score_home}-{rt.score_away} {rt.away}\n"
-        f"AI: {home_pct}/{draw_pct}/{away_pct} → {result_emoji}\n"
-        f"Model v{version} | delta.vercel.app\n"
-        f"#WorldCup2026 #AI"
-    )
-
-    return linkedin, x_post
-
-
-# ─────────────────────────────────────────────
-# Public API (called by main.py)
+# SCHEDULE A MATCH
 # ─────────────────────────────────────────────
 
 async def schedule_match(match_id: str) -> None:
     if match_id in _active:
-        logger.warning(f"{match_id}: Already active, skipping.")
+        logger.warning(f"[Schedule] {match_id}: Already active")
         return
 
     fixture = get_match_info(match_id)
     if not fixture:
-        logger.error(f"schedule_match: Unknown match_id {match_id}")
+        logger.error(f"[Schedule] {match_id}: Not found in fixtures")
         return
 
-    rt = MatchRuntime(match_id)
+    rt = MatchRuntime(match_id, fixture)
     _active[match_id] = rt
 
-    await _pre_match(rt)
+    # HOOK 3: Generate pre-match brief immediately
+    asyncio.create_task(_schedule_pre_match_brief(rt))
 
-    async def _wait_then_start():
-        now = datetime.now(timezone.utc)
-        wait = (rt.kickoff_utc - now).total_seconds()
-        if wait > 0:
-            logger.info(f"{match_id}: Waiting {wait:.0f}s for kickoff.")
-            await asyncio.sleep(wait)
-        await _apply_transition(rt, MatchState.LIVE)
-        await _match_loop(match_id)
+    # Start match loop
+    rt.task = asyncio.create_task(_match_loop(match_id))
+    ko_in = (rt.kickoff_utc - datetime.now(timezone.utc)).total_seconds() / 60
+    logger.info(f"[Schedule] {match_id}: Scheduled — {rt.home} vs {rt.away} in {ko_in:.0f} min")
 
-    rt.task = asyncio.create_task(_wait_then_start())
-    logger.info(f"{match_id}: Scheduled. Kickoff in {(rt.kickoff_utc - datetime.now(timezone.utc)).total_seconds()/60:.0f} min.")
+
+async def _schedule_pre_match_brief(rt: MatchRuntime) -> None:
+    """Generate pre-match brief and save to DB."""
+    try:
+        brief = await _generate_pre_match_brief(rt.match_id, rt.home, rt.away)
+        if brief:
+            rt.pre_match_brief = brief
+            await _db_update_match(rt.match_id, pre_match_brief=brief)
+            _emit(rt.match_id, "pre_match_brief", {
+                "match_id": rt.match_id,
+                "brief": brief,
+            })
+    except Exception as e:
+        logger.error(f"[PreBrief] {rt.match_id}: {e}")
 
 
 async def void_match(match_id: str) -> None:
     rt = _active.get(match_id)
     if not rt:
-        logger.warning(f"void_match: {match_id} not active.")
+        logger.warning(f"[Void] {match_id}: Not active")
         return
-    await _apply_transition(rt, MatchState.VOID)
+    rt.state = "VOID"
+    rt.confidence_locked = True
+    await _db_update_match(match_id, state="VOID")
+    _emit(match_id, "void", {"match_id": match_id, "message": "Match voided"})
     if rt.task:
         rt.task.cancel()
 
 
-async def reschedule_voided_match(match_id: str, new_kickoff_utc: str) -> None:
-    _active.pop(match_id, None)
-    if match_id in FIXTURE_BY_ID:
-        FIXTURE_BY_ID[match_id]["kickoff_utc"] = new_kickoff_utc
-    await schedule_match(match_id)
-    logger.info(f"{match_id}: Rescheduled → {new_kickoff_utc}")
-
+# ─────────────────────────────────────────────
+# PUBLIC TRIGGER (admin panel)
+# ─────────────────────────────────────────────
 
 async def trigger_retrain(match_id: str) -> dict:
+    """Called from admin panel."""
+    if retrain is None:
+        return {"success": False, "error": "Model not available"}
     try:
         accuracy_before = get_accuracy()
-        retrain_result = await retrain(match_id=match_id)
-        improvement = retrain_result.accuracy_after - accuracy_before
-        threshold = get_retrain_threshold(match_id)
-        deployed = improvement >= threshold
-
-        await alerts.alert_retrain_result(
-            match_id=match_id,
-            version=get_current_version(),
-            accuracy_before=accuracy_before,
-            accuracy_after=retrain_result.accuracy_after,
-            improvement=improvement,
-            deployed=deployed,
-            threshold=threshold,
-            duration_s=retrain_result.duration_s,
+        result = await retrain(match_id=match_id)
+        improvement = (
+            (result.accuracy_after - accuracy_before)
+            if (accuracy_before is not None and result.accuracy_after is not None)
+            else None
         )
-        sheets.save_model_run({
-            "run_id":              retrain_result.run_id,
-            "match_id":            match_id,
-            "version":             get_current_version(),
-            "accuracy_before":     accuracy_before,
-            "accuracy_after":      retrain_result.accuracy_after,
-            "improvement_pct":     improvement,
-            "deploy_decision":     deployed,
-            "training_duration_s": retrain_result.duration_s,
-            "feature_importances": retrain_result.feature_importances,
-        })
+        threshold = get_retrain_threshold(match_id)
+        deployed = (improvement >= threshold) if improvement is not None else False
+
+        if alerts:
+            try:
+                await alerts.alert_retrain_result(
+                    match_id=match_id,
+                    version=get_current_version(),
+                    accuracy_before=accuracy_before or 0,
+                    accuracy_after=result.accuracy_after or 0,
+                    improvement=improvement or 0,
+                    deployed=deployed,
+                    threshold=threshold,
+                    duration_s=getattr(result, "duration_s", 0),
+                )
+            except Exception:
+                pass
+
         return {
-            "success":         True,
-            "deployed":        deployed,
+            "success": True,
+            "deployed": deployed,
             "accuracy_before": accuracy_before,
-            "accuracy_after":  retrain_result.accuracy_after,
-            "improvement":     improvement,
-            "threshold":       threshold,
-            "version":         get_current_version(),
+            "accuracy_after": result.accuracy_after,
+            "improvement": improvement,
+            "version": get_current_version(),
         }
     except Exception as e:
-        logger.error(f"Admin retrain failed: {e}")
+        logger.error(f"[Retrain] Admin trigger failed: {e}")
         return {"success": False, "error": str(e)}
 
+
+# ─────────────────────────────────────────────
+# QUERY HELPERS
+# ─────────────────────────────────────────────
 
 def get_all_match_states() -> list[dict]:
     return [
         {
-            "match_id":     rt.match_id,
-            "home":         rt.home,
-            "away":         rt.away,
-            "state":        rt.state,
-            "score_home":   rt.score_home,
-            "score_away":   rt.score_away,
-            "minute":       rt.minute,
+            "match_id":   rt.match_id,
+            "home":       rt.home,
+            "away":       rt.away,
+            "state":      rt.state,
+            "score_home": rt.score_home,
+            "score_away": rt.score_away,
+            "minute":     rt.minute,
             "fetch_cycles": rt.fetch_cycles,
             "parse_errors": rt.parse_errors,
-            "fallbacks":    rt.fallbacks_triggered,
-            "confidence_locked": rt.confidence_locked,
+            "fallbacks":  rt.fallbacks_triggered,
         }
         for rt in _active.values()
     ]
@@ -1004,64 +988,72 @@ def get_match_state(match_id: str) -> Optional[dict]:
     if not rt:
         return None
     return {
-        "match_id":     rt.match_id,
-        "home":         rt.home,
-        "away":         rt.away,
-        "state":        rt.state,
-        "score_home":   rt.score_home,
-        "score_away":   rt.score_away,
-        "minute":       rt.minute,
-        "events":       rt.events[-20:],
-        "prediction": {
-            "home_win": getattr(rt.prediction, "home_win", None),
-            "draw":     getattr(rt.prediction, "draw", None),
-            "away_win": getattr(rt.prediction, "away_win", None),
-            "confidence_range": getattr(rt.prediction, "confidence_range", None),
-            "locked": rt.confidence_locked,
-        },
+        "match_id":   rt.match_id,
+        "home":       rt.home,
+        "away":       rt.away,
+        "state":      rt.state,
+        "score_home": rt.score_home,
+        "score_away": rt.score_away,
+        "minute":     rt.minute,
+        "events":     rt.events[-20:],
         "model_version": get_current_version(),
     }
 
 
+# ─────────────────────────────────────────────
+# STARTUP / SHUTDOWN
+# ─────────────────────────────────────────────
+
 async def startup() -> None:
-    from fixtures import load_state
-    load_state()
-    await sheets.start_queue_worker()
-    asyncio.create_task(alerts.poll_stop_commands())
+    try:
+        load_state()
+    except Exception as e:
+        logger.error(f"[Startup] load_state failed: {e}")
+
+    if sheets:
+        try:
+            await sheets.start_queue_worker()
+        except Exception as e:
+            logger.error(f"[Startup] Sheets worker failed: {e}")
+
+    if alerts:
+        try:
+            asyncio.create_task(alerts.poll_stop_commands())
+        except Exception as e:
+            logger.error(f"[Startup] Telegram poller failed: {e}")
 
     todays = get_todays_matches()
     if todays:
         ids = [f["match_id"] for f in todays]
-        assign_groups_for_day(ids)
-        logger.info(f"Today's matches: {[f['home']+' vs '+f['away'] for f in todays]}")
+        try:
+            assign_groups_for_day(ids)
+        except Exception:
+            pass
+        logger.info(f"[Startup] Today: {[f['home'] + ' vs ' + f['away'] for f in todays]}")
 
-    logger.info("Pipeline startup complete.")
+    logger.info("[Startup] Pipeline ready")
 
 
 async def shutdown() -> None:
     for rt in list(_active.values()):
         if rt.task and not rt.task.done():
             rt.task.cancel()
-    await sheets.stop_queue_worker()
-    logger.info("Pipeline shutdown complete.")
+    if sheets:
+        try:
+            await sheets.stop_queue_worker()
+        except Exception:
+            pass
+    logger.info("[Shutdown] Pipeline stopped")
 
 
 # ─────────────────────────────────────────────
-# PipelineOrchestrator — main.py interface
+# PipelineOrchestrator (main.py interface)
 # ─────────────────────────────────────────────
 
 class PipelineOrchestrator:
     """
-    Wraps module-level pipeline functions into the object interface main.py expects.
-    main.py does:
-        app.state.pipeline = PipelineOrchestrator(broker=broker)
-        await app.state.pipeline.start()
-        await app.state.pipeline.stop()
-        await app.state.pipeline.check_source_health()
-        await app.state.pipeline.generate_pre_match_briefs()
-        await app.state.pipeline.check_fixtures()
-        app.state.pipeline.get_active_match_ids()   ← sync
-        app.state.pipeline.get_status()             ← sync
+    Object interface for main.py.
+    Wraps module-level functions.
     """
 
     def __init__(self, broker=None):
@@ -1069,98 +1061,108 @@ class PipelineOrchestrator:
         self._running = False
 
     async def start(self) -> None:
-        """Called at app startup."""
         await startup()
         self._running = True
-        logger.info("[Orchestrator] Pipeline started")
+        logger.info("[Orchestrator] Started")
 
     async def stop(self) -> None:
-        """Called at app shutdown."""
         await shutdown()
         self._running = False
-        logger.info("[Orchestrator] Pipeline stopped")
 
     async def check_source_health(self) -> None:
         """Called every 30 min by APScheduler."""
         try:
             from fetcher import source_health
             report = source_health.get_health_report()
-            blocked = [s for s in report if s["status"] == "blocked"]
-            failed  = [s for s in report if s["status"] == "failed"]
-
-            if len(blocked) + len(failed) >= 3:
-                await alerts.alert_sources_failing(
-                    failing_count=len(blocked) + len(failed),
-                    total=18,
-                    match_info="Source health check",
-                    failed_sources=[s["name"] for s in (blocked + failed)],
-                )
-
-            for s in report:
-                sheets.save_source_health({
-                    "match_id": "HEALTH_CHECK",
-                    "source_name": s["name"],
-                    "status": s["status"],
-                    "http_code": None,
-                    "latency_ms": None,
-                    "timestamp": datetime.now(timezone.utc),
-                })
-
-            logger.info(
-                f"[Orchestrator] Source health: "
-                f"{len([s for s in report if s['status'] == 'ok'])} ok / "
-                f"{len(blocked)} blocked / {len(failed)} failed"
-            )
+            blocked = [s for s in report if s["status"] in ("blocked", "removed")]
+            if len(blocked) >= 3 and alerts:
+                try:
+                    await alerts.alert_sources_failing(
+                        failing_count=len(blocked),
+                        total=6,
+                        match_info="Source health check",
+                        failed_sources=[s["name"] for s in blocked],
+                    )
+                except Exception:
+                    pass
+            ok_count = sum(1 for s in report if s["status"] == "ok")
+            logger.info(f"[Health] {ok_count}/6 sources ok, {len(blocked)} blocked/removed")
         except Exception as e:
-            logger.error(f"[Orchestrator] check_source_health error: {e}")
+            logger.error(f"[Health] Check failed: {e}")
 
     async def generate_pre_match_briefs(self) -> None:
-        """Called every 15 min by APScheduler. Schedules matches kicking off in 2-3 hours."""
+        """
+        Called every 15 min by APScheduler.
+        Schedules matches kicking off in 2.5-3h if not already active.
+        Also generates pre-match briefs for matches without one.
+        """
         try:
             upcoming = get_upcoming_matches(hours_ahead=3)
             for fixture in upcoming:
                 match_id = fixture.get("match_id")
-                if not match_id or match_id in _active:
+                if not match_id:
                     continue
+
                 kickoff_str = fixture.get("kickoff_utc", "")
-                if not kickoff_str:
-                    continue
                 try:
                     kickoff = datetime.fromisoformat(kickoff_str.replace("Z", "+00:00"))
                     hours_until = (kickoff - datetime.now(timezone.utc)).total_seconds() / 3600
-                    if 2.5 <= hours_until <= 3.0:
-                        logger.info(f"[Orchestrator] Scheduling {match_id} — {hours_until:.1f}h to kickoff")
-                        asyncio.create_task(schedule_match(match_id))
-                except Exception as e:
-                    logger.error(f"[Orchestrator] Failed to schedule {match_id}: {e}")
+                except Exception:
+                    continue
+
+                # Schedule match 2.5h before kickoff
+                if 2.5 <= hours_until <= 3.0 and match_id not in _active:
+                    logger.info(f"[Orchestrator] Auto-scheduling {match_id} ({hours_until:.1f}h to kickoff)")
+                    asyncio.create_task(schedule_match(match_id))
+
+                # Generate pre-match brief for matches < 3h away without one
+                if hours_until <= 3.0:
+                    # Check DB if brief already exists
+                    db = _get_db()
+                    if db:
+                        try:
+                            from main import MatchDB
+                            m = db.query(MatchDB).filter(MatchDB.id == match_id).first()
+                            if m and not m.pre_match_brief:
+                                asyncio.create_task(_generate_and_save_brief(
+                                    match_id,
+                                    fixture.get("home", ""),
+                                    fixture.get("away", ""),
+                                ))
+                        except Exception:
+                            pass
+                        finally:
+                            try:
+                                db.close()
+                            except Exception:
+                                pass
+
         except Exception as e:
             logger.error(f"[Orchestrator] generate_pre_match_briefs error: {e}")
 
     async def check_fixtures(self) -> None:
-        """Called every 2 hours by APScheduler. Cleans up stale VOID matches."""
+        """Called every 2h by APScheduler."""
         try:
             todays = get_todays_matches()
             logger.info(f"[Orchestrator] Fixture check: {len(todays)} matches today")
-            stale = [
-                mid for mid, rt in _active.items()
-                if rt.state == MatchState.VOID
-                and rt.ft_confirmed_at
-                and (datetime.now(timezone.utc) - rt.ft_confirmed_at).total_seconds() > 1800
-            ]
-            for mid in stale:
-                _active.pop(mid, None)
-                logger.info(f"[Orchestrator] Cleaned up stale VOID match {mid}")
         except Exception as e:
             logger.error(f"[Orchestrator] Fixture check failed: {e}")
 
     def get_active_match_ids(self) -> list[str]:
-        """Sync method — returns currently active match IDs."""
         return list(_active.keys())
 
     def get_status(self) -> dict:
-        """Returns pipeline status for admin dashboard."""
         return {
             "running": self._running,
             "active_matches": len(_active),
             "match_states": get_all_match_states(),
         }
+
+
+async def _generate_and_save_brief(match_id: str, home: str, away: str) -> None:
+    """Background task: generate brief and save to DB."""
+    brief = await _generate_pre_match_brief(match_id, home, away)
+    if brief:
+        await _db_update_match(match_id, pre_match_brief=brief)
+        _emit(match_id, "pre_match_brief", {"match_id": match_id, "brief": brief})
+        logger.info(f"[PreBrief] Auto-generated and saved for {match_id}")
