@@ -583,7 +583,7 @@ async def get_matches(request: Request, db: Session = Depends(get_db)):
         date_key = m.kickoff_utc.strftime("%Y-%m-%d") if m.kickoff_utc else "unknown"
         if date_key not in days:
             days[date_key] = []
-        days[date_key].append(_match_to_dict(m))
+        days[date_key].append(_match_to_dict(m, db=db))  # ← db passed here now
     live_states = {"LIVE", "HT", "LIVE_2H", "ET_1H", "ET_HT", "ET_2H", "PENALTIES"}
     finished_states = {"FINISHED", "FT"}
     return {
@@ -603,21 +603,13 @@ async def get_match(match_id: str, request: Request, db: Session = Depends(get_d
     match = db.query(MatchDB).filter(MatchDB.id == match_id).first()
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
-    prediction = (
-        db.query(PredictionDB)
-        .filter(PredictionDB.match_id == match_id)
-        .order_by(PredictionDB.id.desc())
-        .first()
-    )
     events = (
         db.query(LiveEventDB)
         .filter(LiveEventDB.match_id == match_id)
         .order_by(LiveEventDB.id.asc())
         .all()
     )
-    result = _match_to_dict(match, include_debrief=True)
-    if prediction:
-        result["ai_prediction"] = _prediction_to_dict(prediction)
+    result = _match_to_dict(match, include_debrief=True, db=db)  # ← db passed here now, prediction lookup is inside
     result["live_events"] = [_event_to_dict(e) for e in events]
     return result
 
@@ -643,7 +635,6 @@ async def get_vote_summary(match_id: str, request: Request, db: Session = Depend
         "draw_pct": round(draw / total * 100, 1),
         "away_pct": round(away / total * 100, 1),
     }
-
 
 # ─────────────────────────────────────────────
 # VOTING
@@ -1157,7 +1148,7 @@ async def internal_publish(request: Request, body: dict):
 # SERIALISATION HELPERS
 # ─────────────────────────────────────────────
 
-def _match_to_dict(match: MatchDB, admin: bool = False, include_debrief: bool = False) -> dict:
+def _match_to_dict(match: MatchDB, admin: bool = False, include_debrief: bool = False, db: Session = None) -> dict:
     d = {
         "match_id": match.id,
         "home": {"name": match.home_team, "code": match.home_team[:3].upper(), "fifa_rank": 0},
@@ -1177,14 +1168,28 @@ def _match_to_dict(match: MatchDB, admin: bool = False, include_debrief: bool = 
         "source_used": match.source_used,
         "last_updated": match.last_updated.isoformat() if match.last_updated else None,
         "pre_match_brief": match.pre_match_brief,
-        "post_match_debrief": match.post_match_debrief,
+        "post_match_debrief": match.post_match_debrief if include_debrief else None,
         "went_to_et": match.went_to_et,
         "went_to_penalties": match.went_to_penalties,
     }
     if match.went_to_penalties:
         d["penalties"] = {"home": match.penalty_home, "away": match.penalty_away}
-    return d
 
+    # Look up prediction from DB if session provided
+    if db is not None:
+        try:
+            prediction = (
+                db.query(PredictionDB)
+                .filter(PredictionDB.match_id == match.id)
+                .order_by(PredictionDB.id.desc())
+                .first()
+            )
+            if prediction:
+                d["ai_prediction"] = _prediction_to_dict(prediction)
+        except Exception:
+            pass
+
+    return d
 
 def _prediction_to_dict(p: PredictionDB) -> dict:
     return {
