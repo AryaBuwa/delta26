@@ -880,12 +880,14 @@ async def schedule_match(match_id: str) -> None:
     # HOOK 3: Generate pre-match brief immediately
     asyncio.create_task(_schedule_pre_match_brief(rt))
 
+    # HOOK: Generate and save prediction immediately
+    asyncio.create_task(_generate_and_save_prediction(rt))
+
     # Start match loop
     rt.task = asyncio.create_task(_match_loop(match_id))
     ko_in = (rt.kickoff_utc - datetime.now(timezone.utc)).total_seconds() / 60
     logger.info(f"[Schedule] {match_id}: Scheduled — {rt.home} vs {rt.away} in {ko_in:.0f} min")
-
-
+    
 async def _schedule_pre_match_brief(rt: MatchRuntime) -> None:
     """Generate pre-match brief and save to DB."""
     try:
@@ -899,6 +901,57 @@ async def _schedule_pre_match_brief(rt: MatchRuntime) -> None:
             })
     except Exception as e:
         logger.error(f"[PreBrief] {rt.match_id}: {e}")
+
+
+async def _generate_and_save_prediction(rt: MatchRuntime) -> None:
+    """Generate prediction and write to PredictionDB."""
+    try:
+        from model import predict as model_predict
+        result = await model_predict(
+            match_id=rt.match_id,
+            home=rt.home,
+            away=rt.away,
+        )
+        db = _get_db()
+        if db:
+            try:
+                from main import PredictionDB
+                from datetime import datetime, timezone
+                existing = db.query(PredictionDB).filter(
+                    PredictionDB.match_id == rt.match_id
+                ).first()
+                if not existing:
+                    pred = PredictionDB(
+                        match_id=rt.match_id,
+                        home_win=result.home_win,
+                        draw=result.draw,
+                        away_win=result.away_win,
+                        predicted_scorer=result.predicted_scorer or "",
+                        predicted_score=result.predicted_score or "",
+                        confidence_range_low=result.home_win - 0.04,
+                        confidence_range_high=result.home_win + 0.04,
+                        model_version=result.model_version,
+                        training_matches_seen=result.training_matches_seen,
+                        created_at=datetime.now(timezone.utc),
+                        locked_at_85=False,
+                    )
+                    db.add(pred)
+                    db.commit()
+                    logger.info(f"[Prediction] Saved for {rt.match_id}: H={result.home_win:.2f} D={result.draw:.2f} A={result.away_win:.2f}")
+                    _emit(rt.match_id, "prediction_update", {
+                        "match_id": rt.match_id,
+                        "home_win": result.home_win,
+                        "draw": result.draw,
+                        "away_win": result.away_win,
+                        "model_version": result.model_version,
+                    })
+            except Exception as e:
+                logger.error(f"[Prediction] DB write failed for {rt.match_id}: {e}")
+                db.rollback()
+            finally:
+                db.close()
+    except Exception as e:
+        logger.error(f"[Prediction] Generation failed for {rt.match_id}: {e}")
 
 
 async def void_match(match_id: str) -> None:
