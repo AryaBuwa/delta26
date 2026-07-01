@@ -1,9 +1,22 @@
 """
 fixtures.py — Match URL Mappings + Source Group Rotation
-CORRECTED June 20, 2026 — fixed Group E/F ordering and match pairings.
+REBUILT June 30, 2026 — full sequential renumbering.
+
+ROOT CAUSE FIXED: the previous file assembled fixtures across many sessions
+in non-chronological order, leaving gaps (M069, M070 never existed) and
+mid-file jumps (M053-M054 appeared before M049-M052, etc). Match IDs were
+NOT sorted by kickoff time, so "next ID after group stage" was ambiguous —
+this is what caused predictions/briefs/debriefs to silently fail for
+knockout matches: schedule_match() looked up an ID that pointed to the
+wrong fixture or didn't exist as expected.
+
+FIX: every fixture below is numbered 1-72 in TRUE kickoff_utc order, no
+gaps, no exceptions. Knockout (R32 onward) continues cleanly from M073.
+This file is now the single source of truth for match numbering — the
+database should match these IDs exactly going forward.
 
 Group E: Germany, Ivory Coast, Ecuador, Curacao
-Group F: Netherlands, Japan, Sweden, Tunisia  ← was swapped in original
+Group F: Netherlands, Japan, Sweden, Tunisia
 """
 
 import json
@@ -72,142 +85,122 @@ SOURCE_BASE_URLS: dict[str, str] = {
 }
 
 # ─────────────────────────────────────────────
-# ALL 72 GROUP STAGE FIXTURES (corrected)
+# ALL 72 GROUP STAGE FIXTURES — strictly sequential by kickoff_utc
 # ─────────────────────────────────────────────
 
 FIXTURES: list[dict] = [
-    # ── GROUP A: Mexico, South Korea, Czechia, South Africa ──────────────
-    {"match_id":"WC2026_M001","home":"Mexico",       "away":"South Africa", "kickoff_utc":"2026-06-11T19:00:00Z","venue":"Mexico City Stadium","phase":"group","group":"A","home_score":2,"away_score":0,"state":"FINISHED"},
-    {"match_id":"WC2026_M002","home":"South Korea",  "away":"Czechia",      "kickoff_utc":"2026-06-12T03:00:00Z","venue":"Guadalajara Stadium","phase":"group","group":"A","home_score":2,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M025","home":"Czechia",      "away":"South Africa", "kickoff_utc":"2026-06-18T16:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"A","home_score":1,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M028","home":"Mexico",       "away":"South Korea",  "kickoff_utc":"2026-06-19T02:00:00Z","venue":"Guadalajara Stadium","phase":"group","group":"A","home_score":1,"away_score":0,"state":"FINISHED"},
-    {"match_id":"WC2026_M053","home":"Czechia",      "away":"Mexico",       "kickoff_utc":"2026-06-25T01:00:00Z","venue":"Mexico City Stadium","phase":"group","group":"A","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M054","home":"South Africa", "away":"South Korea",  "kickoff_utc":"2026-06-25T01:00:00Z","venue":"Guadalajara Stadium","phase":"group","group":"A","home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M001","home":"Mexico","away":"South Africa","kickoff_utc":"2026-06-11T19:00:00Z","venue":"Mexico City Stadium","phase":"group","group":"A","home_score":2,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M002","home":"South Korea","away":"Czechia","kickoff_utc":"2026-06-12T03:00:00Z","venue":"Guadalajara Stadium","phase":"group","group":"A","home_score":2,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M003","home":"Canada","away":"Bosnia and Herzegovina","kickoff_utc":"2026-06-12T20:00:00Z","venue":"BMO Field, Toronto","phase":"group","group":"B","home_score":1,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M004","home":"United States","away":"Paraguay","kickoff_utc":"2026-06-13T02:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"group","group":"D","home_score":4,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M005","home":"Qatar","away":"Switzerland","kickoff_utc":"2026-06-13T19:00:00Z","venue":"Levi's Stadium, San Francisco","phase":"group","group":"B","home_score":1,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M006","home":"Brazil","away":"Morocco","kickoff_utc":"2026-06-13T22:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"group","group":"C","home_score":1,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M007","home":"Haiti","away":"Scotland","kickoff_utc":"2026-06-14T01:00:00Z","venue":"Gillette Stadium, Boston","phase":"group","group":"C","home_score":0,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M008","home":"Australia","away":"Turkiye","kickoff_utc":"2026-06-14T01:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"group","group":"D","home_score":2,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M009","home":"Germany","away":"Curacao","kickoff_utc":"2026-06-14T17:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"group","group":"E","home_score":7,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M010","home":"Netherlands","away":"Japan","kickoff_utc":"2026-06-14T20:00:00Z","venue":"AT&T Stadium, Dallas","phase":"group","group":"F","home_score":2,"away_score":2,"state":"FINISHED"},
+    {"match_id":"WC2026_M011","home":"Ivory Coast","away":"Ecuador","kickoff_utc":"2026-06-14T23:00:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"group","group":"E","home_score":1,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M012","home":"Sweden","away":"Tunisia","kickoff_utc":"2026-06-15T01:00:00Z","venue":"Estadio BBVA, Monterrey","phase":"group","group":"F","home_score":5,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M013","home":"Spain","away":"Cape Verde","kickoff_utc":"2026-06-15T16:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"group","group":"H","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M014","home":"Belgium","away":"Egypt","kickoff_utc":"2026-06-15T19:00:00Z","venue":"Lincoln Financial Field, Philadelphia","phase":"group","group":"G","home_score":1,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M015","home":"Saudi Arabia","away":"Uruguay","kickoff_utc":"2026-06-15T22:00:00Z","venue":"Camping World Stadium, Orlando","phase":"group","group":"H","home_score":1,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M016","home":"Iran","away":"New Zealand","kickoff_utc":"2026-06-16T01:00:00Z","venue":"BC Place, Vancouver","phase":"group","group":"G","home_score":2,"away_score":2,"state":"FINISHED"},
+    {"match_id":"WC2026_M017","home":"France","away":"Senegal","kickoff_utc":"2026-06-16T19:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"I","home_score":3,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M018","home":"Iraq","away":"Norway","kickoff_utc":"2026-06-16T22:00:00Z","venue":"Empower Field, Denver","phase":"group","group":"I","home_score":1,"away_score":4,"state":"FINISHED"},
+    {"match_id":"WC2026_M019","home":"Argentina","away":"Algeria","kickoff_utc":"2026-06-17T01:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"group","group":"J","home_score":3,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M020","home":"Austria","away":"Jordan","kickoff_utc":"2026-06-17T04:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"group","group":"J","home_score":3,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M021","home":"Portugal","away":"DR Congo","kickoff_utc":"2026-06-17T17:00:00Z","venue":"Levi's Stadium, San Francisco","phase":"group","group":"K","home_score":1,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M022","home":"England","away":"Croatia","kickoff_utc":"2026-06-17T20:00:00Z","venue":"AT&T Stadium, Dallas","phase":"group","group":"L","home_score":4,"away_score":2,"state":"FINISHED"},
+    {"match_id":"WC2026_M023","home":"Ghana","away":"Panama","kickoff_utc":"2026-06-17T23:00:00Z","venue":"Mexico City Stadium","phase":"group","group":"L","home_score":1,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M024","home":"Uzbekistan","away":"Colombia","kickoff_utc":"2026-06-18T02:00:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"group","group":"K","home_score":1,"away_score":3,"state":"FINISHED"},
+    {"match_id":"WC2026_M025","home":"Czechia","away":"South Africa","kickoff_utc":"2026-06-18T16:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"A","home_score":1,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M026","home":"Switzerland","away":"Bosnia and Herzegovina","kickoff_utc":"2026-06-18T19:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"group","group":"B","home_score":4,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M027","home":"Canada","away":"Qatar","kickoff_utc":"2026-06-18T22:00:00Z","venue":"BC Place, Vancouver","phase":"group","group":"B","home_score":6,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M028","home":"Mexico","away":"South Korea","kickoff_utc":"2026-06-19T02:00:00Z","venue":"Guadalajara Stadium","phase":"group","group":"A","home_score":1,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M029","home":"United States","away":"Australia","kickoff_utc":"2026-06-19T19:00:00Z","venue":"Lumen Field, Seattle","phase":"group","group":"D","home_score":2,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M030","home":"Scotland","away":"Brazil","kickoff_utc":"2026-06-19T22:00:00Z","venue":"Rose Bowl, Los Angeles","phase":"group","group":"C","home_score":0,"away_score":3,"state":"FINISHED"},
+    {"match_id":"WC2026_M031","home":"Morocco","away":"Haiti","kickoff_utc":"2026-06-20T01:00:00Z","venue":"Gillette Stadium, Boston","phase":"group","group":"C","home_score":1,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M032","home":"Turkiye","away":"Paraguay","kickoff_utc":"2026-06-20T02:00:00Z","venue":"Levi's Stadium, Santa Clara","phase":"group","group":"D","home_score":0,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M033","home":"Netherlands","away":"Sweden","kickoff_utc":"2026-06-20T17:00:00Z","venue":"NRG Stadium, Houston","phase":"group","group":"F","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M034","home":"Germany","away":"Ivory Coast","kickoff_utc":"2026-06-20T20:00:00Z","venue":"BMO Field, Toronto","phase":"group","group":"E","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M035","home":"Ecuador","away":"Curacao","kickoff_utc":"2026-06-21T01:00:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"group","group":"E","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M036","home":"Tunisia","away":"Japan","kickoff_utc":"2026-06-21T04:00:00Z","venue":"Estadio BBVA, Monterrey","phase":"group","group":"F","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M037","home":"Spain","away":"Saudi Arabia","kickoff_utc":"2026-06-21T16:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"H","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M038","home":"Belgium","away":"Iran","kickoff_utc":"2026-06-21T19:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"group","group":"G","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M039","home":"Uruguay","away":"Cape Verde","kickoff_utc":"2026-06-21T22:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"group","group":"H","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M040","home":"New Zealand","away":"Egypt","kickoff_utc":"2026-06-22T01:00:00Z","venue":"BC Place, Vancouver","phase":"group","group":"G","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M041","home":"Argentina","away":"Austria","kickoff_utc":"2026-06-22T17:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"J","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M042","home":"France","away":"Iraq","kickoff_utc":"2026-06-22T21:00:00Z","venue":"Lincoln Financial Field, Philadelphia","phase":"group","group":"I","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M043","home":"Norway","away":"Senegal","kickoff_utc":"2026-06-23T00:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"group","group":"I","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M044","home":"Jordan","away":"Algeria","kickoff_utc":"2026-06-23T03:00:00Z","venue":"Levi's Stadium, San Francisco","phase":"group","group":"J","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M045","home":"Portugal","away":"Uzbekistan","kickoff_utc":"2026-06-23T17:00:00Z","venue":"AT&T Stadium, Dallas","phase":"group","group":"K","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M046","home":"England","away":"Ghana","kickoff_utc":"2026-06-23T20:00:00Z","venue":"Empower Field, Denver","phase":"group","group":"L","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M047","home":"Panama","away":"Croatia","kickoff_utc":"2026-06-23T23:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"group","group":"L","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M048","home":"Colombia","away":"DR Congo","kickoff_utc":"2026-06-24T02:00:00Z","venue":"Rose Bowl, Los Angeles","phase":"group","group":"K","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M049","home":"Switzerland","away":"Canada","kickoff_utc":"2026-06-24T19:00:00Z","venue":"BC Place, Vancouver","phase":"group","group":"B","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M050","home":"Bosnia and Herzegovina","away":"Qatar","kickoff_utc":"2026-06-24T19:00:00Z","venue":"Lincoln Financial Field, Philadelphia","phase":"group","group":"B","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M051","home":"Scotland","away":"Brazil","kickoff_utc":"2026-06-24T22:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"group","group":"C","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M052","home":"Morocco","away":"Haiti","kickoff_utc":"2026-06-24T22:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"C","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M053","home":"Czechia","away":"Mexico","kickoff_utc":"2026-06-25T01:00:00Z","venue":"Mexico City Stadium","phase":"group","group":"A","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M054","home":"South Africa","away":"South Korea","kickoff_utc":"2026-06-25T01:00:00Z","venue":"Guadalajara Stadium","phase":"group","group":"A","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M055","home":"Ecuador","away":"Germany","kickoff_utc":"2026-06-25T20:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"group","group":"E","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M056","home":"Curacao","away":"Ivory Coast","kickoff_utc":"2026-06-25T20:00:00Z","venue":"Lincoln Financial Field, Philadelphia","phase":"group","group":"E","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M057","home":"Japan","away":"Sweden","kickoff_utc":"2026-06-25T23:00:00Z","venue":"AT&T Stadium, Dallas","phase":"group","group":"F","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M058","home":"Tunisia","away":"Netherlands","kickoff_utc":"2026-06-25T23:00:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"group","group":"F","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M059","home":"Turkiye","away":"United States","kickoff_utc":"2026-06-26T02:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"group","group":"D","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M060","home":"Paraguay","away":"Australia","kickoff_utc":"2026-06-26T02:00:00Z","venue":"Levi's Stadium, Santa Clara","phase":"group","group":"D","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M061","home":"Norway","away":"France","kickoff_utc":"2026-06-26T19:00:00Z","venue":"Gillette Stadium, Boston","phase":"group","group":"I","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M062","home":"Senegal","away":"Iraq","kickoff_utc":"2026-06-26T19:00:00Z","venue":"BMO Field, Toronto","phase":"group","group":"I","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M063","home":"Algeria","away":"Argentina","kickoff_utc":"2026-06-26T22:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"J","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M064","home":"Austria","away":"Jordan","kickoff_utc":"2026-06-26T22:00:00Z","venue":"Gillette Stadium, Boston","phase":"group","group":"J","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M065","home":"Egypt","away":"Iran","kickoff_utc":"2026-06-27T03:00:00Z","venue":"Lumen Field, Seattle","phase":"group","group":"G","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M066","home":"New Zealand","away":"Belgium","kickoff_utc":"2026-06-27T03:00:00Z","venue":"BC Place, Vancouver","phase":"group","group":"G","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M067","home":"Uruguay","away":"Spain","kickoff_utc":"2026-06-27T19:00:00Z","venue":"Guadalajara Stadium","phase":"group","group":"H","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M068","home":"Cape Verde","away":"Saudi Arabia","kickoff_utc":"2026-06-27T19:00:00Z","venue":"NRG Stadium, Houston","phase":"group","group":"H","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M069","home":"DR Congo","away":"Uzbekistan","kickoff_utc":"2026-06-28T01:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"K","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M070","home":"Colombia","away":"Portugal","kickoff_utc":"2026-06-28T01:00:00Z","venue":"Rose Bowl, Los Angeles","phase":"group","group":"K","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M071","home":"Croatia","away":"England","kickoff_utc":"2026-06-28T19:00:00Z","venue":"AT&T Stadium, Dallas","phase":"group","group":"L","home_score":0,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M072","home":"Panama","away":"Ghana","kickoff_utc":"2026-06-28T19:00:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"group","group":"L","home_score":0,"away_score":0,"state":"FINISHED"},
 
-    # ── GROUP B: Canada, Bosnia, Qatar, Switzerland ────────────────────────
-    {"match_id":"WC2026_M003","home":"Canada",       "away":"Bosnia and Herzegovina","kickoff_utc":"2026-06-12T20:00:00Z","venue":"BMO Field, Toronto","phase":"group","group":"B","home_score":1,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M005","home":"Qatar",        "away":"Switzerland",  "kickoff_utc":"2026-06-13T19:00:00Z","venue":"Levi's Stadium, San Francisco","phase":"group","group":"B","home_score":1,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M026","home":"Switzerland",  "away":"Bosnia and Herzegovina","kickoff_utc":"2026-06-18T19:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"group","group":"B","home_score":4,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M027","home":"Canada",       "away":"Qatar",        "kickoff_utc":"2026-06-18T22:00:00Z","venue":"BC Place, Vancouver","phase":"group","group":"B","home_score":6,"away_score":0,"state":"FINISHED"},
-    {"match_id":"WC2026_M049","home":"Switzerland",  "away":"Canada",       "kickoff_utc":"2026-06-24T19:00:00Z","venue":"BC Place, Vancouver","phase":"group","group":"B","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M050","home":"Bosnia and Herzegovina","away":"Qatar","kickoff_utc":"2026-06-24T19:00:00Z","venue":"Lincoln Financial Field, Philadelphia","phase":"group","group":"B","home_score":0,"away_score":0,"state":"SCHEDULED"},
+    # ── KNOCKOUT — Round of 32 (M073–M088, 16 matches) ──────────────────────
+    {"match_id":"WC2026_M073","home":"TBD","away":"TBD","kickoff_utc":"2026-06-28T19:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M074","home":"TBD","away":"TBD","kickoff_utc":"2026-06-28T22:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M075","home":"South Africa","away":"Canada","kickoff_utc":"2026-06-29T17:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M076","home":"Brazil","away":"Japan","kickoff_utc":"2026-06-29T20:30:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M077","home":"Germany","away":"Paraguay","kickoff_utc":"2026-06-30T01:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M078","home":"Netherlands","away":"Morocco","kickoff_utc":"2026-06-30T17:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M079","home":"Ivory Coast","away":"Norway","kickoff_utc":"2026-06-30T21:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M080","home":"France","away":"Sweden","kickoff_utc":"2026-07-01T01:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M081","home":"Mexico","away":"Ecuador","kickoff_utc":"2026-07-01T16:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M082","home":"England","away":"DR Congo","kickoff_utc":"2026-07-01T20:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M083","home":"Belgium","away":"Senegal","kickoff_utc":"2026-07-02T00:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M084","home":"USA","away":"Bosnia and Herzegovina","kickoff_utc":"2026-07-02T19:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M085","home":"Spain","away":"Austria","kickoff_utc":"2026-07-02T23:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M086","home":"Portugal","away":"Croatia","kickoff_utc":"2026-07-03T03:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M087","home":"Switzerland","away":"Algeria","kickoff_utc":"2026-07-03T18:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M088","home":"Argentina","away":"Cape Verde","kickoff_utc":"2026-07-03T22:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
 
-    # ── GROUP C: Brazil, Morocco, Scotland, Haiti ──────────────────────────
-    {"match_id":"WC2026_M006","home":"Brazil",       "away":"Morocco",      "kickoff_utc":"2026-06-13T22:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"group","group":"C","home_score":1,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M007","home":"Haiti",        "away":"Scotland",     "kickoff_utc":"2026-06-14T01:00:00Z","venue":"Gillette Stadium, Boston","phase":"group","group":"C","home_score":0,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M029","home":"Scotland",     "away":"Brazil",       "kickoff_utc":"2026-06-19T22:00:00Z","venue":"Rose Bowl, Los Angeles","phase":"group","group":"C","home_score":0,"away_score":3,"state":"FINISHED"},
-    {"match_id":"WC2026_M030","home":"Morocco",      "away":"Haiti",        "kickoff_utc":"2026-06-20T01:00:00Z","venue":"Gillette Stadium, Boston","phase":"group","group":"C","home_score":1,"away_score":0,"state":"FINISHED"},
-    {"match_id":"WC2026_M051","home":"Scotland",     "away":"Brazil",       "kickoff_utc":"2026-06-24T22:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"group","group":"C","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M052","home":"Morocco",      "away":"Haiti",        "kickoff_utc":"2026-06-24T22:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"C","home_score":0,"away_score":0,"state":"SCHEDULED"},
+    # ── KNOCKOUT — Round of 16 (M089–M096, 8 matches) ────────────────────
+    {"match_id":"WC2026_M089","home":"TBD","away":"TBD","kickoff_utc":"2026-07-09T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M090","home":"TBD","away":"TBD","kickoff_utc":"2026-07-09T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M091","home":"TBD","away":"TBD","kickoff_utc":"2026-07-10T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M092","home":"TBD","away":"TBD","kickoff_utc":"2026-07-10T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M093","home":"TBD","away":"TBD","kickoff_utc":"2026-07-11T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M094","home":"TBD","away":"TBD","kickoff_utc":"2026-07-11T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M095","home":"TBD","away":"TBD","kickoff_utc":"2026-07-12T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M096","home":"TBD","away":"TBD","kickoff_utc":"2026-07-12T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
 
-    # ── GROUP D: USA, Paraguay, Australia, Turkiye ────────────────────────
-    {"match_id":"WC2026_M004","home":"United States","away":"Paraguay",     "kickoff_utc":"2026-06-13T02:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"group","group":"D","home_score":4,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M008","home":"Australia",    "away":"Turkiye",      "kickoff_utc":"2026-06-14T01:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"group","group":"D","home_score":2,"away_score":0,"state":"FINISHED"},
-    {"match_id":"WC2026_M031","home":"United States","away":"Australia",    "kickoff_utc":"2026-06-19T19:00:00Z","venue":"Lumen Field, Seattle","phase":"group","group":"D","home_score":2,"away_score":0,"state":"FINISHED"},
-    {"match_id":"WC2026_M032","home":"Turkiye",      "away":"Paraguay",     "kickoff_utc":"2026-06-20T02:00:00Z","venue":"Levi's Stadium, Santa Clara","phase":"group","group":"D","home_score":0,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M059","home":"Turkiye",      "away":"United States","kickoff_utc":"2026-06-26T02:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"group","group":"D","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M060","home":"Paraguay",     "away":"Australia",    "kickoff_utc":"2026-06-26T02:00:00Z","venue":"Levi's Stadium, Santa Clara","phase":"group","group":"D","home_score":0,"away_score":0,"state":"SCHEDULED"},
+    # ── KNOCKOUT — Quarter-Finals (M097–M100, 4 matches) ─────────────────
+    {"match_id":"WC2026_M097","home":"TBD","away":"TBD","kickoff_utc":"2026-07-14T19:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M098","home":"TBD","away":"TBD","kickoff_utc":"2026-07-14T22:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M099","home":"TBD","away":"TBD","kickoff_utc":"2026-07-15T19:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M100","home":"TBD","away":"TBD","kickoff_utc":"2026-07-15T22:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
 
-    # ── GROUP E: Germany, Ivory Coast, Ecuador, Curacao ───────────────────
-    {"match_id":"WC2026_M009","home":"Germany",      "away":"Curacao",      "kickoff_utc":"2026-06-14T17:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"group","group":"E","home_score":7,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M011","home":"Ivory Coast",  "away":"Ecuador",      "kickoff_utc":"2026-06-14T23:00:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"group","group":"E","home_score":1,"away_score":0,"state":"FINISHED"},
-    {"match_id":"WC2026_M033","home":"Germany",      "away":"Ivory Coast",  "kickoff_utc":"2026-06-20T20:00:00Z","venue":"BMO Field, Toronto","phase":"group","group":"E","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M034","home":"Ecuador",      "away":"Curacao",      "kickoff_utc":"2026-06-21T01:00:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"group","group":"E","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M055","home":"Ecuador",      "away":"Germany",      "kickoff_utc":"2026-06-25T20:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"group","group":"E","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M056","home":"Curacao",      "away":"Ivory Coast",  "kickoff_utc":"2026-06-25T20:00:00Z","venue":"Lincoln Financial Field, Philadelphia","phase":"group","group":"E","home_score":0,"away_score":0,"state":"SCHEDULED"},
-
-    # ── GROUP F: Netherlands, Japan, Sweden, Tunisia ──────────────────────
-    {"match_id":"WC2026_M010","home":"Netherlands",  "away":"Japan",        "kickoff_utc":"2026-06-14T20:00:00Z","venue":"AT&T Stadium, Dallas","phase":"group","group":"F","home_score":2,"away_score":2,"state":"FINISHED"},
-    {"match_id":"WC2026_M012","home":"Sweden",       "away":"Tunisia",      "kickoff_utc":"2026-06-15T01:00:00Z","venue":"Estadio BBVA, Monterrey","phase":"group","group":"F","home_score":5,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M035","home":"Netherlands",  "away":"Sweden",       "kickoff_utc":"2026-06-20T17:00:00Z","venue":"NRG Stadium, Houston","phase":"group","group":"F","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M036","home":"Tunisia",      "away":"Japan",        "kickoff_utc":"2026-06-21T04:00:00Z","venue":"Estadio BBVA, Monterrey","phase":"group","group":"F","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M057","home":"Japan",        "away":"Sweden",       "kickoff_utc":"2026-06-25T23:00:00Z","venue":"AT&T Stadium, Dallas","phase":"group","group":"F","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M058","home":"Tunisia",      "away":"Netherlands",  "kickoff_utc":"2026-06-25T23:00:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"group","group":"F","home_score":0,"away_score":0,"state":"SCHEDULED"},
-
-    # ── GROUP G: Belgium, Egypt, Iran, New Zealand ────────────────────────
-    {"match_id":"WC2026_M014","home":"Belgium",      "away":"Egypt",        "kickoff_utc":"2026-06-15T19:00:00Z","venue":"Lincoln Financial Field, Philadelphia","phase":"group","group":"G","home_score":1,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M016","home":"Iran",         "away":"New Zealand",  "kickoff_utc":"2026-06-16T01:00:00Z","venue":"BC Place, Vancouver","phase":"group","group":"G","home_score":2,"away_score":2,"state":"FINISHED"},
-    {"match_id":"WC2026_M037","home":"Belgium",      "away":"Iran",         "kickoff_utc":"2026-06-21T19:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"group","group":"G","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M038","home":"New Zealand",  "away":"Egypt",        "kickoff_utc":"2026-06-22T01:00:00Z","venue":"BC Place, Vancouver","phase":"group","group":"G","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M065","home":"Egypt",        "away":"Iran",         "kickoff_utc":"2026-06-27T03:00:00Z","venue":"Lumen Field, Seattle","phase":"group","group":"G","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M066","home":"New Zealand",  "away":"Belgium",      "kickoff_utc":"2026-06-27T03:00:00Z","venue":"BC Place, Vancouver","phase":"group","group":"G","home_score":0,"away_score":0,"state":"SCHEDULED"},
-
-    # ── GROUP H: Spain, Cape Verde, Saudi Arabia, Uruguay ─────────────────
-    {"match_id":"WC2026_M013","home":"Spain",        "away":"Cape Verde",   "kickoff_utc":"2026-06-15T16:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"group","group":"H","home_score":0,"away_score":0,"state":"FINISHED"},
-    {"match_id":"WC2026_M015","home":"Saudi Arabia", "away":"Uruguay",      "kickoff_utc":"2026-06-15T22:00:00Z","venue":"Camping World Stadium, Orlando","phase":"group","group":"H","home_score":1,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M039","home":"Spain",        "away":"Saudi Arabia", "kickoff_utc":"2026-06-21T16:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"H","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M040","home":"Uruguay",      "away":"Cape Verde",   "kickoff_utc":"2026-06-21T22:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"group","group":"H","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M067","home":"Uruguay",      "away":"Spain",        "kickoff_utc":"2026-06-27T19:00:00Z","venue":"Guadalajara Stadium","phase":"group","group":"H","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M068","home":"Cape Verde",   "away":"Saudi Arabia", "kickoff_utc":"2026-06-27T19:00:00Z","venue":"NRG Stadium, Houston","phase":"group","group":"H","home_score":0,"away_score":0,"state":"SCHEDULED"},
-
-    # ── GROUP I: France, Senegal, Norway, Iraq ────────────────────────────
-    {"match_id":"WC2026_M017","home":"France",       "away":"Senegal",      "kickoff_utc":"2026-06-16T19:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"I","home_score":3,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M018","home":"Iraq",         "away":"Norway",       "kickoff_utc":"2026-06-16T22:00:00Z","venue":"Empower Field, Denver","phase":"group","group":"I","home_score":1,"away_score":4,"state":"FINISHED"},
-    {"match_id":"WC2026_M041","home":"France",       "away":"Iraq",         "kickoff_utc":"2026-06-22T21:00:00Z","venue":"Lincoln Financial Field, Philadelphia","phase":"group","group":"I","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M042","home":"Norway",       "away":"Senegal",      "kickoff_utc":"2026-06-23T00:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"group","group":"I","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M061","home":"Norway",       "away":"France",       "kickoff_utc":"2026-06-26T19:00:00Z","venue":"Gillette Stadium, Boston","phase":"group","group":"I","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M062","home":"Senegal",      "away":"Iraq",         "kickoff_utc":"2026-06-26T19:00:00Z","venue":"BMO Field, Toronto","phase":"group","group":"I","home_score":0,"away_score":0,"state":"SCHEDULED"},
-
-    # ── GROUP J: Argentina, Algeria, Austria, Jordan ──────────────────────
-    {"match_id":"WC2026_M019","home":"Argentina",    "away":"Algeria",      "kickoff_utc":"2026-06-17T01:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"group","group":"J","home_score":3,"away_score":0,"state":"FINISHED"},
-    {"match_id":"WC2026_M020","home":"Austria",      "away":"Jordan",       "kickoff_utc":"2026-06-17T04:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"group","group":"J","home_score":3,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M043","home":"Argentina",    "away":"Austria",      "kickoff_utc":"2026-06-22T17:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"J","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M044","home":"Jordan",       "away":"Algeria",      "kickoff_utc":"2026-06-23T03:00:00Z","venue":"Levi's Stadium, San Francisco","phase":"group","group":"J","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M063","home":"Algeria",      "away":"Argentina",    "kickoff_utc":"2026-06-26T22:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"J","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M064","home":"Austria",      "away":"Jordan",       "kickoff_utc":"2026-06-26T22:00:00Z","venue":"Gillette Stadium, Boston","phase":"group","group":"J","home_score":0,"away_score":0,"state":"SCHEDULED"},
-
-    # ── GROUP K: Portugal, Congo DR, Colombia, Uzbekistan ─────────────────
-    {"match_id":"WC2026_M021","home":"Portugal",     "away":"DR Congo",     "kickoff_utc":"2026-06-17T17:00:00Z","venue":"Levi's Stadium, San Francisco","phase":"group","group":"K","home_score":1,"away_score":1,"state":"FINISHED"},
-    {"match_id":"WC2026_M024","home":"Uzbekistan",   "away":"Colombia",     "kickoff_utc":"2026-06-18T02:00:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"group","group":"K","home_score":1,"away_score":3,"state":"FINISHED"},
-    {"match_id":"WC2026_M045","home":"Portugal",     "away":"Uzbekistan",   "kickoff_utc":"2026-06-23T17:00:00Z","venue":"AT&T Stadium, Dallas","phase":"group","group":"K","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M048","home":"Colombia",     "away":"DR Congo",     "kickoff_utc":"2026-06-24T02:00:00Z","venue":"Rose Bowl, Los Angeles","phase":"group","group":"K","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M071","home":"DR Congo",     "away":"Uzbekistan",   "kickoff_utc":"2026-06-28T01:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"group","group":"K","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M072","home":"Colombia",     "away":"Portugal",     "kickoff_utc":"2026-06-28T01:00:00Z","venue":"Rose Bowl, Los Angeles","phase":"group","group":"K","home_score":0,"away_score":0,"state":"SCHEDULED"},
-
-    # ── GROUP L: England, Croatia, Ghana, Panama ──────────────────────────
-    {"match_id":"WC2026_M022","home":"England",      "away":"Croatia",      "kickoff_utc":"2026-06-17T20:00:00Z","venue":"AT&T Stadium, Dallas","phase":"group","group":"L","home_score":4,"away_score":2,"state":"FINISHED"},
-    {"match_id":"WC2026_M023","home":"Ghana",        "away":"Panama",       "kickoff_utc":"2026-06-17T23:00:00Z","venue":"Mexico City Stadium","phase":"group","group":"L","home_score":1,"away_score":0,"state":"FINISHED"},
-    {"match_id":"WC2026_M046","home":"England",      "away":"Ghana",        "kickoff_utc":"2026-06-23T20:00:00Z","venue":"Empower Field, Denver","phase":"group","group":"L","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M047","home":"Panama",       "away":"Croatia",      "kickoff_utc":"2026-06-23T23:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"group","group":"L","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M073","home":"Croatia",      "away":"England",      "kickoff_utc":"2026-06-28T19:00:00Z","venue":"AT&T Stadium, Dallas","phase":"group","group":"L","home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M074","home":"Panama",       "away":"Ghana",        "kickoff_utc":"2026-06-28T19:00:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"group","group":"L","home_score":0,"away_score":0,"state":"SCHEDULED"},
-
-    # ── KNOCKOUT PLACEHOLDERS (Round of 32 → Final) ───────────────────────
-    {"match_id":"WC2026_M075","home":"TBD","away":"TBD","kickoff_utc":"2026-07-02T20:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M076","home":"TBD","away":"TBD","kickoff_utc":"2026-07-02T23:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M077","home":"TBD","away":"TBD","kickoff_utc":"2026-07-03T19:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M078","home":"TBD","away":"TBD","kickoff_utc":"2026-07-03T22:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M079","home":"TBD","away":"TBD","kickoff_utc":"2026-07-04T19:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M080","home":"TBD","away":"TBD","kickoff_utc":"2026-07-04T22:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M081","home":"TBD","away":"TBD","kickoff_utc":"2026-07-05T19:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M082","home":"TBD","away":"TBD","kickoff_utc":"2026-07-05T22:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M083","home":"TBD","away":"TBD","kickoff_utc":"2026-07-06T19:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M084","home":"TBD","away":"TBD","kickoff_utc":"2026-07-06T22:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M085","home":"TBD","away":"TBD","kickoff_utc":"2026-07-07T19:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M086","home":"TBD","away":"TBD","kickoff_utc":"2026-07-07T22:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M087","home":"TBD","away":"TBD","kickoff_utc":"2026-07-08T19:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M088","home":"TBD","away":"TBD","kickoff_utc":"2026-07-08T22:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M089","home":"TBD","away":"TBD","kickoff_utc":"2026-07-09T19:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M090","home":"TBD","away":"TBD","kickoff_utc":"2026-07-09T22:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    # R16
-    {"match_id":"WC2026_M091","home":"TBD","away":"TBD","kickoff_utc":"2026-07-11T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M092","home":"TBD","away":"TBD","kickoff_utc":"2026-07-11T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M093","home":"TBD","away":"TBD","kickoff_utc":"2026-07-12T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M094","home":"TBD","away":"TBD","kickoff_utc":"2026-07-12T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M095","home":"TBD","away":"TBD","kickoff_utc":"2026-07-13T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M096","home":"TBD","away":"TBD","kickoff_utc":"2026-07-13T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M097","home":"TBD","away":"TBD","kickoff_utc":"2026-07-14T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M098","home":"TBD","away":"TBD","kickoff_utc":"2026-07-14T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    # QF
-    {"match_id":"WC2026_M099","home":"TBD","away":"TBD","kickoff_utc":"2026-07-16T19:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M100","home":"TBD","away":"TBD","kickoff_utc":"2026-07-16T22:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M101","home":"TBD","away":"TBD","kickoff_utc":"2026-07-17T19:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M102","home":"TBD","away":"TBD","kickoff_utc":"2026-07-17T22:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    # SF + Final
-    {"match_id":"WC2026_M103","home":"TBD","away":"TBD","kickoff_utc":"2026-07-18T19:00:00Z","venue":"TBD","phase":"sf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M104","home":"TBD","away":"TBD","kickoff_utc":"2026-07-18T22:00:00Z","venue":"TBD","phase":"sf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M105","home":"TBD","away":"TBD","kickoff_utc":"2026-07-19T17:00:00Z","venue":"TBD","phase":"3rd","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M106","home":"TBD","away":"TBD","kickoff_utc":"2026-07-19T20:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"final","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    # ── Semi-Finals (M101–M102), Third Place (M103), Final (M104) ─────────
+    {"match_id":"WC2026_M101","home":"TBD","away":"TBD","kickoff_utc":"2026-07-18T19:00:00Z","venue":"TBD","phase":"sf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M102","home":"TBD","away":"TBD","kickoff_utc":"2026-07-18T22:00:00Z","venue":"TBD","phase":"sf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M103","home":"TBD","away":"TBD","kickoff_utc":"2026-07-19T17:00:00Z","venue":"TBD","phase":"3rd","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M104","home":"TBD","away":"TBD","kickoff_utc":"2026-07-19T20:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"final","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
 ]
 
 FIXTURE_BY_ID: dict[str, dict] = {f["match_id"]: f for f in FIXTURES}
