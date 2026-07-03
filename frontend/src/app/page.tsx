@@ -1,7 +1,8 @@
 'use client'
 // app/page.tsx — Homepage: tournament overview + all match cards
-// Updated July 2, 2026: scroll fix, AI correct indicators, prediction status,
+// Updated July 4, 2026: scroll fix, AI correct indicators, prediction status,
 // learning progress card, AI vs human strip, latest AI prediction card
+// date grouping fixed to use UTC dates
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
@@ -51,15 +52,12 @@ function AICorrectIndicator({ match }: { match: Match }) {
   const { home_win, away_win } = match.ai_prediction
   const draw = match.ai_prediction.draw
 
-  // Determine actual result
   const homeScore = match.score?.home ?? 0
   const awayScore = match.score?.away ?? 0
   const actualResult = homeScore > awayScore ? 'home' : awayScore > homeScore ? 'away' : 'draw'
 
-  // Determine AI predicted result (highest probability)
   const maxProb = Math.max(home_win, draw, away_win)
   const aiPredicted = maxProb === home_win ? 'home' : maxProb === away_win ? 'away' : 'draw'
-
   const correct = actualResult === aiPredicted
 
   return (
@@ -78,7 +76,7 @@ function AICorrectIndicator({ match }: { match: Match }) {
   )
 }
 
-// ── MATCH CARD (homepage compact version) ─────────────────────────────────────
+// ── MATCH CARD ────────────────────────────────────────────────────────────────
 function MatchCard({ match }: { match: Match }) {
   const live = isLive(match.state)
   const finished = match.state === 'FINISHED' || match.state === 'FT'
@@ -92,26 +90,22 @@ function MatchCard({ match }: { match: Match }) {
         transition={{ duration: 0.15 }}
         style={{ cursor: 'pointer' }}
       >
-        {/* Card top bar */}
         <div
           className="flex items-center justify-between px-4 py-2.5"
           style={{ borderBottom: '1px solid var(--line-dim)' }}
         >
           <div className="flex items-center gap-2">
             <StateTag state={match.state} />
-            {match.group && (
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                {match.phase === 'r32' ? 'R32' :
-                 match.phase === 'r16' ? 'R16' :
-                 match.phase === 'qf' ? 'QF' :
-                 match.phase === 'sf' ? 'SF' :
-                 match.phase === 'final' ? 'FINAL' :
-                 `Group ${match.group}`}
-              </span>
-            )}
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              {match.phase === 'r32' ? 'R32' :
+               match.phase === 'r16' ? 'R16' :
+               match.phase === 'qf' ? 'QF' :
+               match.phase === 'sf' ? 'SF' :
+               match.phase === 'final' ? 'FINAL' :
+               match.group ? `Group ${match.group}` : ''}
+            </span>
           </div>
           <div className="flex items-center gap-3">
-            {/* AI correct indicator for finished matches */}
             <AICorrectIndicator match={match} />
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)' }}>
               {match.state === 'SCHEDULED'
@@ -121,7 +115,6 @@ function MatchCard({ match }: { match: Match }) {
           </div>
         </div>
 
-        {/* Score */}
         <ScoreBlock
           home={match.home}
           away={match.away}
@@ -131,7 +124,6 @@ function MatchCard({ match }: { match: Match }) {
           compact
         />
 
-        {/* Confidence bar — only if not scheduled */}
         {match.state !== 'SCHEDULED' && match.ai_prediction && (
           <ConfidenceBar
             confidence={{
@@ -147,7 +139,6 @@ function MatchCard({ match }: { match: Match }) {
           />
         )}
 
-        {/* Scheduled: show AI prediction + prediction status */}
         {match.state === 'SCHEDULED' && match.ai_prediction && (
           <div className="px-4 pb-3">
             <div className="flex justify-between" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
@@ -158,17 +149,11 @@ function MatchCard({ match }: { match: Match }) {
           </div>
         )}
 
-        {/* Bottom bar: prediction status + tap hint */}
         <div
           className="flex items-center justify-between px-4 py-2"
           style={{ borderTop: '1px solid var(--line-dim)' }}
         >
-          <span style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 9,
-            color: predStatus.color,
-            letterSpacing: '0.08em',
-          }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: predStatus.color, letterSpacing: '0.08em' }}>
             {predStatus.label}
           </span>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em' }}>
@@ -180,9 +165,8 @@ function MatchCard({ match }: { match: Match }) {
   )
 }
 
-// ── LATEST AI PREDICTION CARD (Priority 1) ────────────────────────────────────
+// ── LATEST AI PREDICTION CARD ─────────────────────────────────────────────────
 function LatestPredictionCard({ days }: { days: Array<{ date: string; matches: Match[] }> }) {
-  // Find the next upcoming match with a prediction
   const allMatches = days.flatMap(d => d.matches)
   const next = allMatches.find(m => m.state === 'SCHEDULED' && m.ai_prediction)
     ?? allMatches.find(m => isLive(m.state) && m.ai_prediction)
@@ -221,7 +205,6 @@ function LatestPredictionCard({ days }: { days: Array<{ date: string; matches: M
         </div>
 
         <div className="flex items-center gap-6">
-          {/* Home */}
           <div style={{ textAlign: 'center', minWidth: 60 }}>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 500, color: homeWin === maxProb ? 'var(--accent)' : 'var(--text-primary)' }}>
               {homeWin}%
@@ -231,7 +214,6 @@ function LatestPredictionCard({ days }: { days: Array<{ date: string; matches: M
             </div>
           </div>
 
-          {/* Draw */}
           <div style={{ textAlign: 'center', minWidth: 40 }}>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 500, color: draw === maxProb ? 'var(--accent)' : 'var(--text-muted)' }}>
               {draw}%
@@ -239,7 +221,6 @@ function LatestPredictionCard({ days }: { days: Array<{ date: string; matches: M
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 2 }}>Draw</div>
           </div>
 
-          {/* Away */}
           <div style={{ textAlign: 'center', minWidth: 60 }}>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 500, color: awayWin === maxProb ? 'var(--accent)' : 'var(--text-primary)' }}>
               {awayWin}%
@@ -249,19 +230,15 @@ function LatestPredictionCard({ days }: { days: Array<{ date: string; matches: M
             </div>
           </div>
 
-          {/* Divider */}
           <div style={{ flex: 1, height: 1, background: 'var(--line-dim)' }} />
 
-          {/* Meta */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, textAlign: 'right' }}>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)' }}>
-              Model Confidence
-            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)' }}>Model Confidence</div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 500, color: 'var(--text-primary)' }}>
               {confidence}%
             </div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)' }}>
-              {live ? 'Prediction Locked at 85\'' : getPredictionStatus(next.state).label}
+              {live ? "Prediction Locked at 85'" : getPredictionStatus(next.state).label}
             </div>
           </div>
         </div>
@@ -270,7 +247,7 @@ function LatestPredictionCard({ days }: { days: Array<{ date: string; matches: M
   )
 }
 
-// ── LEARNING PROGRESS CARD (Priority 3) ───────────────────────────────────────
+// ── LEARNING PROGRESS CARD ────────────────────────────────────────────────────
 function LearningProgressCard({ stats }: { stats: StatsData | null }) {
   if (!stats) return null
 
@@ -279,12 +256,7 @@ function LearningProgressCard({ stats }: { stats: StatsData | null }) {
   const improvement = stats.improvement != null ? Math.round(stats.improvement * 100) : null
 
   return (
-    <div style={{
-      border: '1px solid var(--line-dim)',
-      borderRadius: 4,
-      background: 'var(--bg-card)',
-      padding: '14px 18px',
-    }}>
+    <div style={{ border: '1px solid var(--line-dim)', borderRadius: 4, background: 'var(--bg-card)', padding: '14px 18px' }}>
       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-dim)', marginBottom: 10 }}>
         Learning Progress
       </div>
@@ -332,7 +304,7 @@ function LearningProgressCard({ stats }: { stats: StatsData | null }) {
 
 // ── DAY GROUP ─────────────────────────────────────────────────────────────────
 function DayGroup({ date, matches }: { date: string; matches: Match[] }) {
-  const d = new Date(date + 'T12:00:00')
+  const d = new Date(date + 'T12:00:00Z')
   const label = d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
   const hasLive = matches.some(m => isLive(m.state))
 
@@ -348,10 +320,7 @@ function DayGroup({ date, matches }: { date: string; matches: Match[] }) {
           {matches.length} match{matches.length !== 1 ? 'es' : ''}
         </span>
       </div>
-
-      <div className="grid gap-3" style={{
-        gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-      }}>
+      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
         {matches.map(m => <MatchCard key={m.match_id} match={m} />)}
       </div>
     </section>
@@ -372,15 +341,16 @@ export default function HomePage() {
     getMatches()
       .then(data => {
         const allMatches: Match[] = data.days.flatMap(d => d.matches)
-        const localDays: Record<string, Match[]> = {}
+        const utcDays: Record<string, Match[]> = {}
         allMatches.forEach(m => {
-          const localDate = new Date(m.kickoff_utc).toLocaleDateString('en-CA')
-          if (!localDays[localDate]) localDays[localDate] = []
-          localDays[localDate].push(m)
+          // Use UTC date directly from kickoff string — no timezone conversion
+          const utcDate = m.kickoff_utc.substring(0, 10)
+          if (!utcDays[utcDate]) utcDays[utcDate] = []
+          utcDays[utcDate].push(m)
         })
         const regrouped = {
           ...data,
-          days: Object.entries(localDays)
+          days: Object.entries(utcDays)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([date, matches]) => ({ date, matches }))
         }
@@ -391,7 +361,6 @@ export default function HomePage() {
       .finally(() => setLoading(false))
   }, [setMatch])
 
-  // Fetch stats — fails silently if /api/stats doesn't exist yet
   useEffect(() => {
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/stats`)
       .then(r => r.ok ? r.json() : null)
@@ -408,7 +377,6 @@ export default function HomePage() {
   const totalDone = overview?.completed_matches ?? 0
   const totalMatches = overview?.total_matches ?? 104
 
-  // Sort so upcoming/live days are at top, past days at bottom
   const sortedDays = days ? [...days].sort((a, b) => {
     const aHasUpcoming = a.matches.some(m => m.state === 'SCHEDULED' || isLive(m.state))
     const bHasUpcoming = b.matches.some(m => m.state === 'SCHEDULED' || isLive(m.state))
@@ -419,8 +387,6 @@ export default function HomePage() {
 
   return (
     <div className="page" style={{ paddingTop: 32, paddingBottom: 64 }}>
-
-      {/* Hero */}
       <div style={{ marginBottom: 32 }}>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
@@ -441,7 +407,6 @@ export default function HomePage() {
             </p>
           </div>
 
-          {/* Tournament stats */}
           <div className="flex gap-4 flex-wrap">
             {[
               { label: 'Live Now', value: liveCount > 0 ? String(liveCount) : '—', accent: liveCount > 0 },
@@ -462,29 +427,22 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* SSE status */}
         <div className="flex items-center gap-2 mt-4">
-          <div style={{
-            width: 6, height: 6, borderRadius: '50%',
-            background: connected ? 'var(--accent-green)' : 'var(--text-dim)',
-          }} />
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: connected ? 'var(--accent-green)' : 'var(--text-dim)' }} />
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em' }}>
             {connected ? 'Live updates active · ~30s delayed' : 'Connecting…'}
           </span>
         </div>
       </div>
 
-      {/* Latest AI Prediction card (Priority 1) */}
       {days && <LatestPredictionCard days={days} />}
 
-      {/* Learning Progress card (Priority 3) */}
       {stats && (
         <div style={{ marginBottom: 32 }}>
           <LearningProgressCard stats={stats} />
         </div>
       )}
 
-      {/* Content */}
       {loading && (
         <div className="flex flex-col gap-3">
           {[...Array(3)].map((_, i) => (
