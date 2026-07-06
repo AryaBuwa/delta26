@@ -730,8 +730,8 @@ async def _post_match_auto(rt: MatchRuntime) -> None:
 async def _tavily_fetch(match_id: str, home: str, away: str) -> list:
     """
     Tavily-based live score fetcher for QF onward (M097+).
-    Replaces HTML scraping which fails on JS-rendered sports pages.
-    Polls every 3 minutes to stay within Tavily free tier.
+    Returns SourceResult-compatible objects with extracted_score and text
+    fields matching what _auto_update_score expects.
     """
     try:
         from tavily import TavilyClient
@@ -746,6 +746,8 @@ async def _tavily_fetch(match_id: str, home: str, away: str) -> list:
             logger.warning(f"[Tavily] {match_id}: No content returned")
             return []
 
+        combined_text = " ".join(raw_texts)
+
         try:
             from parser import parse_match_state
             parsed = await parse_match_state(
@@ -759,20 +761,29 @@ async def _tavily_fetch(match_id: str, home: str, away: str) -> list:
                 match_state="LIVE",
             )
             if parsed:
-                logger.info(f"[Tavily] {match_id}: Parsed OK — {parsed.score.home}-{parsed.score.away} min={parsed.minute}")
+                extracted_score = {
+                    "home": parsed.score.home,
+                    "away": parsed.score.away,
+                }
+                logger.info(
+                    f"[Tavily] {match_id}: Parsed OK — "
+                    f"{parsed.score.home}-{parsed.score.away} min={parsed.minute}"
+                )
                 return [type('SR', (), {
                     'ok': True,
                     'blocked': False,
                     'source': 'tavily',
+                    'extracted_score': extracted_score,
+                    'text': combined_text,
                     'data': parsed,
                 })()]
         except Exception as e:
             logger.error(f"[Tavily] {match_id}: Parse failed — {e}")
+
         return []
     except Exception as e:
         logger.error(f"[Tavily] {match_id}: Search failed — {e}")
         return []
-
 
 async def _match_loop(match_id: str) -> None:
     rt = _active[match_id]
