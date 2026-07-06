@@ -727,9 +727,66 @@ async def _post_match_auto(rt: MatchRuntime) -> None:
 # CORE MATCH LOOP
 # ─────────────────────────────────────────────
 
+async def _tavily_fetch(match_id: str, home: str, away: str) -> list:
+    """
+    Tavily-based live score fetcher for QF onward (M097+).
+    Replaces HTML scraping which fails on JS-rendered sports pages.
+    Polls every 3 minutes to stay within Tavily free tier.
+    """
+    try:
+        from tavily import TavilyClient
+        client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+        result = client.search(
+            query=f"{home} vs {away} live score FIFA World Cup 2026",
+            search_depth="basic",
+            max_results=3,
+        )
+        raw_texts = [r.get("content", "") for r in result.get("results", []) if r.get("content")]
+        if not raw_texts:
+            logger.warning(f"[Tavily] {match_id}: No content returned")
+            return []
+
+        try:
+            from parser import parse_match_state
+            parsed = await parse_match_state(
+                match_id=match_id,
+                home_team=home,
+                away_team=away,
+                raw_texts=raw_texts,
+                source_names=["tavily"] * len(raw_texts),
+                current_score={"home": 0, "away": 0},
+                current_minute="0",
+                match_state="LIVE",
+            )
+            if parsed:
+                logger.info(f"[Tavily] {match_id}: Parsed OK — {parsed.score.home}-{parsed.score.away} min={parsed.minute}")
+                return [type('SR', (), {
+                    'ok': True,
+                    'blocked': False,
+                    'source': 'tavily',
+                    'data': parsed,
+                })()]
+        except Exception as e:
+            logger.error(f"[Tavily] {match_id}: Parse failed — {e}")
+        return []
+    except Exception as e:
+        logger.error(f"[Tavily] {match_id}: Search failed — {e}")
+        return []
+
+
 async def _match_loop(match_id: str) -> None:
     rt = _active[match_id]
     logger.info(f"[Loop] {match_id} started — {rt.home} vs {rt.away}")
+
+    # Determine if this match uses Tavily (QF onward = M097+)
+    try:
+        match_num = int(match_id.replace("WC2026_M", ""))
+    except ValueError:
+        match_num = 0
+    use_tavily = match_num >= 97
+
+    if use_tavily:
+        logger.info(f"[Loop] {match_id}: Using Tavily fetcher (QF onward)")
 
     while rt.state not in ("FINISHED", "VOID", "FT"):
         loop_start = time.monotonic()
@@ -740,6 +797,10 @@ async def _match_loop(match_id: str) -> None:
             if r.state in ("LIVE", "LIVE_2H", "ET_1H", "ET_2H", "PENALTIES")
         )
         interval = get_fetch_interval(active_count, rt.state)
+
+        # Tavily: enforce minimum 3-minute interval to stay within free tier
+        if use_tavily and interval < 180:
+            interval = 180
 
         # Heartbeat during SCHEDULED state — wait for kickoff
         if rt.state == "SCHEDULED":
@@ -770,17 +831,30 @@ async def _match_loop(match_id: str) -> None:
                 asyncio.create_task(_post_match_auto(rt))
                 break
 
-        # Fetch all sources
-        if fetch_match_data is None:
-            await asyncio.sleep(interval)
-            continue
-
+        # Fetch — Tavily for QF+, original fetcher for earlier rounds
         try:
-            source_results = await fetch_match_data(
-                match_id=match_id,
-                home=rt.home,
-                away=rt.away,
-            )
+            if use_tavily:
+                source_results = await _tavily_fetch(
+                    match_id=match_id,
+                    home=rt.home,
+                    away=rt.away,
+                )
+                # Fallback to original fetcher if Tavily returns nothing
+                if not source_results and fetch_match_data is not None:
+                    logger.warning(f"[Loop] {match_id}: Tavily returned nothing — falling back to fetcher")
+                    source_results = await fetch_match_data(
+                        match_id=match_id,
+                        home=rt.home,
+                        away=rt.away,
+                    )
+            elif fetch_match_data is not None:
+                source_results = await fetch_match_data(
+                    match_id=match_id,
+                    home=rt.home,
+                    away=rt.away,
+                )
+            else:
+                source_results = []
         except Exception as e:
             logger.error(f"[Loop] {match_id}: fetch error — {e}")
             if sheets:
@@ -836,7 +910,7 @@ async def _match_loop(match_id: str) -> None:
             except Exception:
                 pass
 
-        # HOOK 1: Auto update score/state from extracted HTML
+        # HOOK 1: Auto update score/state from extracted HTML/Tavily
         changed = await _auto_update_score(rt, source_results)
 
         # Emit full match update
