@@ -109,10 +109,12 @@ export interface Match {
   score: Score
   minute: string
   events: MatchEvent[]
-  pre_match_brief?: string | null        // ← plain string from API
-  post_match_debrief?: string | null     // ← plain string from API
+  pre_match_brief?: string | null
+  post_match_debrief?: string | null
   ai_prediction?: AIPrediction | null
   live?: LiveMatchData
+  went_to_penalties?: boolean
+  penalties?: { home: number; away: number } | null
 }
 
 // ── TOURNAMENT ────────────────────────────────────────────────────────────────
