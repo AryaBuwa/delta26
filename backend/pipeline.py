@@ -375,6 +375,26 @@ async def _auto_update_score(rt: MatchRuntime, source_results: list) -> bool:
                 rt.prev_state = rt.state
                 rt.state = detected_state
                 state_changed = True
+                
+                # Trigger FINISHED processing
+                if detected_state == "PENALTIES":
+                    if alerts:
+                        try:
+                            await alerts.alert_penalty_shootout(
+                                match_id=rt.match_id,
+                                home=rt.home,
+                                away=rt.away,
+                            )
+                        except Exception:
+                            pass
+                elif detected_state == "FINISHED":
+                    asyncio.create_task(_post_match_auto(rt))
+                elif detected_state == "VOID":
+                    rt.confidence_locked = True
+                    _emit(rt.match_id, "void", {
+                        "match_id": rt.match_id,
+                        "message": "Match void — all predictions cancelled.",
+                    })
 
                 # FT confirmation timestamp
                 if detected_state == "FT":
