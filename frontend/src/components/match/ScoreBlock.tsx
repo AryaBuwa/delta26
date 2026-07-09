@@ -10,6 +10,9 @@ interface Props {
   minute: string
   state: MatchState
   compact?: boolean
+  wentToPenalties?: boolean
+  penaltyHome?: number | null
+  penaltyAway?: number | null
 }
 
 const stateLabel: Record<MatchState, string | null> = {
@@ -26,10 +29,11 @@ const stateLabel: Record<MatchState, string | null> = {
   VOID:      'VOID',
 }
 
-export function ScoreBlock({ home, away, score, minute, state, compact }: Props) {
+export function ScoreBlock({ home, away, score, minute, state, compact, wentToPenalties, penaltyHome, penaltyAway }: Props) {
   const isLive = ['LIVE', 'LIVE_2H', 'ET_1H', 'ET_2H', 'PENALTIES'].includes(state)
   const isScheduled = state === 'SCHEDULED'
   const label = stateLabel[state]
+  const showPenalties = wentToPenalties && penaltyHome != null && penaltyAway != null
 
   return (
     <div className={`grid items-center px-5 ${compact ? 'py-4 gap-3' : 'py-6 gap-4'}`}
@@ -69,6 +73,21 @@ export function ScoreBlock({ home, away, score, minute, state, compact }: Props)
           >
             {score.home} <span style={{ color: 'var(--text-dim)' }}>–</span> {score.away}
           </motion.div>
+        )}
+
+        {/* Penalty shootout score */}
+        {showPenalties && (
+          <span style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            color: 'var(--accent)',
+            letterSpacing: '0.1em',
+            background: 'rgba(232,255,71,0.06)',
+            padding: '2px 8px',
+            borderRadius: 2,
+          }}>
+            ({penaltyHome}–{penaltyAway} pens)
+          </span>
         )}
 
         {/* Minute or state label */}
