@@ -389,6 +389,21 @@ async def alert_system_down(down_since: datetime) -> None:
         action="check all layers immediately",
     )
 
+async def alert_penalty_shootout(match_id: str, home: str, away: str) -> None:
+    """Match went to penalties — manual update needed for shootout score."""
+    await _send(
+        f"🥅 <b>PENALTIES</b> — Manual update needed\n"
+        f"Match: {home} vs {away} ({match_id})\n"
+        f"Match ended 0-0 or level after 90min + ET.\n"
+        f"Once shootout finishes, run:\n\n"
+        f"<code>python -c \"\nfrom main import SessionLocal, MatchDB\n"
+        f"db = SessionLocal()\n"
+        f"m = db.query(MatchDB).filter(MatchDB.id == '{match_id}').first()\n"
+        f"m.went_to_penalties = True\n"
+        f"m.penalty_home = X  # replace with real score\n"
+        f"m.penalty_away = Y  # replace with real score\n"
+        f"db.commit()\ndb.close()\n\"</code>"
+    )
 
 async def alert_system_restored() -> None:
     """System back up — cancel CRITICAL and notify."""
