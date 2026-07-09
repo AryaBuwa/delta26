@@ -122,6 +122,9 @@ function MatchCard({ match }: { match: Match }) {
           minute={match.minute}
           state={match.state}
           compact
+          wentToPenalties={match.went_to_penalties}
+          penaltyHome={match.penalties?.home}
+          penaltyAway={match.penalties?.away}
         />
 
         {match.state !== 'SCHEDULED' && match.ai_prediction && (
