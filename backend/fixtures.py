@@ -181,27 +181,27 @@ FIXTURES: list[dict] = [
     {"match_id":"WC2026_M088","home":"Argentina","away":"Cape Verde","kickoff_utc":"2026-07-03T22:00:00Z","venue":"TBD","phase":"r32","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
 
     # ── KNOCKOUT — Round of 16 (M089–M096, 8 matches) ────────────────────
-    {"match_id":"WC2026_M089","home":"TBD","away":"TBD","kickoff_utc":"2026-07-09T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M090","home":"TBD","away":"TBD","kickoff_utc":"2026-07-09T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M091","home":"TBD","away":"TBD","kickoff_utc":"2026-07-10T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M092","home":"TBD","away":"TBD","kickoff_utc":"2026-07-10T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M093","home":"TBD","away":"TBD","kickoff_utc":"2026-07-11T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M094","home":"TBD","away":"TBD","kickoff_utc":"2026-07-11T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M095","home":"TBD","away":"TBD","kickoff_utc":"2026-07-12T19:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M096","home":"TBD","away":"TBD","kickoff_utc":"2026-07-12T22:00:00Z","venue":"TBD","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M089","home":"Morocco","away":"Canada","kickoff_utc":"2026-07-04T17:00:00Z","venue":"NRG Stadium, Houston","phase":"r16","group":None,"home_score":3,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M090","home":"France","away":"Paraguay","kickoff_utc":"2026-07-04T21:00:00Z","venue":"Lincoln Financial Field, Philadelphia","phase":"r16","group":None,"home_score":1,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M091","home":"Norway","away":"Brazil","kickoff_utc":"2026-07-05T20:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"r16","group":None,"home_score":2,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M092","home":"England","away":"Mexico","kickoff_utc":"2026-07-06T00:00:00Z","venue":"Estadio Azteca, Mexico City","phase":"r16","group":None,"home_score":3,"away_score":2,"state":"FINISHED"},
+    {"match_id":"WC2026_M093","home":"Spain","away":"Portugal","kickoff_utc":"2026-07-06T19:00:00Z","venue":"AT&T Stadium, Dallas","phase":"r16","group":None,"home_score":1,"away_score":0,"state":"FINISHED"},
+    {"match_id":"WC2026_M094","home":"Belgium","away":"USA","kickoff_utc":"2026-07-07T00:00:00Z","venue":"Lumen Field, Seattle","phase":"r16","group":None,"home_score":3,"away_score":1,"state":"FINISHED"},
+    {"match_id":"WC2026_M095","home":"Argentina","away":"Egypt","kickoff_utc":"2026-07-07T16:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"r16","group":None,"home_score":3,"away_score":2,"state":"FINISHED"},
+    {"match_id":"WC2026_M096","home":"Switzerland","away":"Colombia","kickoff_utc":"2026-07-07T20:00:00Z","venue":"BC Place, Vancouver","phase":"r16","group":None,"home_score":0,"away_score":0,"state":"FINISHED"},
 
     # ── KNOCKOUT — Quarter-Finals (M097–M100, 4 matches) ─────────────────
-    {"match_id":"WC2026_M097","home":"TBD","away":"TBD","kickoff_utc":"2026-07-14T19:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M098","home":"TBD","away":"TBD","kickoff_utc":"2026-07-14T22:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M099","home":"TBD","away":"TBD","kickoff_utc":"2026-07-15T19:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M100","home":"TBD","away":"TBD","kickoff_utc":"2026-07-15T22:00:00Z","venue":"TBD","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M097","home":"Morocco","away":"France","kickoff_utc":"2026-07-09T19:00:00Z","venue":"Gillette Stadium, Boston","phase":"qf","group":None,"home_score":0,"away_score":2,"state":"FINISHED"},
+    {"match_id":"WC2026_M098","home":"Belgium","away":"Spain","kickoff_utc":"2026-07-10T19:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M099","home":"Norway","away":"England","kickoff_utc":"2026-07-11T19:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M100","home":"Argentina","away":"Switzerland","kickoff_utc":"2026-07-12T01:30:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
 
     # ── Semi-Finals (M101–M102), Third Place (M103), Final (M104) ─────────
-    {"match_id":"WC2026_M101","home":"TBD","away":"TBD","kickoff_utc":"2026-07-18T19:00:00Z","venue":"TBD","phase":"sf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-    {"match_id":"WC2026_M102","home":"TBD","away":"TBD","kickoff_utc":"2026-07-18T22:00:00Z","venue":"TBD","phase":"sf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M101","home":"TBD","away":"TBD","kickoff_utc":"2026-07-14T19:00:00Z","venue":"TBD","phase":"sf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M102","home":"TBD","away":"TBD","kickoff_utc":"2026-07-14T22:00:00Z","venue":"TBD","phase":"sf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
     {"match_id":"WC2026_M103","home":"TBD","away":"TBD","kickoff_utc":"2026-07-19T17:00:00Z","venue":"TBD","phase":"3rd","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
     {"match_id":"WC2026_M104","home":"TBD","away":"TBD","kickoff_utc":"2026-07-19T20:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"final","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
-]
+]    
 
 FIXTURE_BY_ID: dict[str, dict] = {f["match_id"]: f for f in FIXTURES}
 
