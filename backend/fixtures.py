@@ -192,7 +192,7 @@ FIXTURES: list[dict] = [
 
     # ── KNOCKOUT — Quarter-Finals (M097–M100, 4 matches) ─────────────────
     {"match_id":"WC2026_M097","home":"Morocco","away":"France","kickoff_utc":"2026-07-09T19:00:00Z","venue":"Gillette Stadium, Boston","phase":"qf","group":None,"home_score":0,"away_score":2,"state":"FINISHED"},
-    {"match_id":"WC2026_M098","home":"Belgium","away":"Spain","kickoff_utc":"2026-07-10T19:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M098","home":"Belgium","away":"Spain","kickoff_utc":"2026-07-10T19:00:00Z","venue":"SoFi Stadium, Los Angeles","phase":"qf","group":None,"home_score":1,"away_score":2,"state":"FINISHED"},
     {"match_id":"WC2026_M099","home":"Norway","away":"England","kickoff_utc":"2026-07-11T19:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
     {"match_id":"WC2026_M100","home":"Argentina","away":"Switzerland","kickoff_utc":"2026-07-12T01:30:00Z","venue":"Arrowhead Stadium, Kansas City","phase":"qf","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
 
