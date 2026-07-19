@@ -208,7 +208,7 @@ FIXTURES: list[dict] = [
     {"match_id":"WC2026_M101","home":"France","away":"Spain","kickoff_utc":"2026-07-14T19:00:00Z","venue":"AT&T Stadium, Dallas","phase":"sf","group":None,"home_score":0,"away_score":2,"state":"FINISHED"},
     {"match_id":"WC2026_M102","home":"England","away":"Argentina","kickoff_utc":"2026-07-15T19:00:00Z","venue":"Mercedes-Benz Stadium, Atlanta","phase":"sf","group":None,"home_score":1,"away_score":2,"state":"FINISHED"},
     # ── THIRD PLACE + FINAL ──────────────────────────────────────────────────
-    {"match_id":"WC2026_M103","home":"France","away":"England","kickoff_utc":"2026-07-18T21:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"3rd","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
+    {"match_id":"WC2026_M103","home":"France","away":"England","kickoff_utc":"2026-07-18T21:00:00Z","venue":"Hard Rock Stadium, Miami","phase":"3rd","group":None,"home_score":4,"away_score":6,"state":"FINISHED"},
     {"match_id":"WC2026_M104","home":"Spain","away":"Argentina","kickoff_utc":"2026-07-19T19:00:00Z","venue":"MetLife Stadium, New Jersey","phase":"final","group":None,"home_score":0,"away_score":0,"state":"SCHEDULED"},
 ]
 
