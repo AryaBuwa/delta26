@@ -1,22 +1,5 @@
 """
-fixtures.py — Match URL Mappings + Source Group Rotation
-REBUILT June 30, 2026 — full sequential renumbering.
-
-ROOT CAUSE FIXED: the previous file assembled fixtures across many sessions
-in non-chronological order, leaving gaps (M069, M070 never existed) and
-mid-file jumps (M053-M054 appeared before M049-M052, etc). Match IDs were
-NOT sorted by kickoff time, so "next ID after group stage" was ambiguous —
-this is what caused predictions/briefs/debriefs to silently fail for
-knockout matches: schedule_match() looked up an ID that pointed to the
-wrong fixture or didn't exist as expected.
-
-FIX: every fixture below is numbered 1-72 in TRUE kickoff_utc order, no
-gaps, no exceptions. Knockout (R32 onward) continues cleanly from M073.
-This file is now the single source of truth for match numbering — the
-database should match these IDs exactly going forward.
-
-Group E: Germany, Ivory Coast, Ecuador, Curacao
-Group F: Netherlands, Japan, Sweden, Tunisia
+fixtures.py — Tournament Finished.
 """
 
 import json
