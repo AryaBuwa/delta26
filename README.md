@@ -2,24 +2,24 @@
   <img src="assets/banner.png" width="100%">
 </p>
 
-<h1 align="center">DEΔTA</h1>
+<h1 align="center">DEΔTA26</h1>
 
 <p align="center">
-<strong>An AI that experiences the World Cup in real time.</strong>
+<strong>An AI that experienced the World Cup in real time.</strong>
 </p>
 
 <p align="center">
-<i>Who predicts better — a machine that learns from every match, or humans watching the same game?</i>
+<i>An autonomous system that predicted all 104 matches of the FIFA World Cup 2026, retraining after every completed game.</i>
 </p>
 
 <p align="center">
-Currently being built during FIFA World Cup 2026.<br>
-App is in active development.
+Built live during the tournament (June 11 – July 19, 2026).<br>
+<strong>Project complete. Backend and database now decommissioned.</strong>
 </p>
 
 <p align="center">
   <a href="https://delta26.vercel.app">
-    <img src="https://img.shields.io/badge/Live%20Demo-delta26.vercel.app-E8FF47?style=for-the-badge" alt="Live Demo">
+    <img src="https://img.shields.io/badge/Archive-delta26.vercel.app-E8FF47?style=for-the-badge" alt="Live Archive">
   </a>
 </p>
 
@@ -29,8 +29,7 @@ App is in active development.
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi\&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs)
 ![XGBoost](https://img.shields.io/badge/XGBoost-ML-black)
-![Render](https://img.shields.io/badge/Render-Live-5C4EE5)
-![Vercel](https://img.shields.io/badge/Vercel-Deployed-000000?logo=vercel)
+![Status](https://img.shields.io/badge/Status-Archived-8b8fa3)
 
 </p>
 
@@ -42,34 +41,37 @@ App is in active development.
   <img src="assets/homepage.PNG" width="100%">
 </p>
 
-<p align="center">
-<i>AI vs Humans. 104 Matches.</i>
-</p>
+---
+
+## What was this?
+
+Delta26 was a live prediction system that ran across all 104 FIFA World Cup 2026 matches. Before each match it published a prediction; after each match, it retrained on the result before the next kickoff. Published predictions were never rewritten by later retraining — only future matches were affected.
+
+A companion voting feature let visitors compete against the AI's predictions. It saw fewer than 20 votes across the entire tournament — a real, documented result in its own right, and one of the case study's honest lessons.
+
+The full engineering breakdown — architecture, results, what worked, what didn't, and what was learned — is written up as a case study here: **[delta26.vercel.app](https://delta26.vercel.app)**
 
 ---
 
-## What is this?
+## Results
 
-DEΔTA is a live prediction system running across all 104 FIFA World Cup 2026 matches.
-
-After every match, the AI model retrains on the new result. Humans vote on each match before and during the game. The gap between the two — who is right, who is wrong, and when — is the central experiment.
-
-The project combines statistical modelling, machine learning, live data pipelines, and AI-generated analysis into a single end-to-end system built during the tournament itself.
+| Metric | Value |
+|---|---|
+| Matches predicted | 104 |
+| Tournament duration | 39 days |
+| Live tournament accuracy | 46.2% (48/104 correct) |
+| Peak validation accuracy | 68.4% (after Round of 16) |
+| Final model validation accuracy | 61.9% |
+| Model versions shipped | 8 |
 
 ---
 
-## How it works
+## How it worked
 
 ```text
-18 live sources → async parallel fetch → Groq LLM parsing
-                                   ↓
-                            prediction model
-                                   ↓
-                              SSE stream
-                                   ↓
-                                browser
-                                   ↑
-                      retrains after every match
+Internet → Live Data Collection → Validation → Feature Engineering
+        → Prediction Engine (Dixon-Coles + Monte Carlo + XGBoost)
+        → Groq Analysis → Database → FastAPI → Next.js
 ```
 
 ---
@@ -77,57 +79,39 @@ The project combines statistical modelling, machine learning, live data pipeline
 ## System Components
 
 ### Data Layer
-
-* 18 sources split into 6 rotating groups
-* Each match receives its own source group
-* Async parallel fetching
-* Rate limiting and automatic retry mechanisms
-* Search fallback using Tavily and Linkup when sources fail
+- Six confirmed live-score sources, async parallel fetch
+- Search-API fallback (Tavily) from the quarter-finals onward, after JavaScript rendering made HTML scraping unreliable
 
 ### Parsing Layer
-
-* Raw commentary and web content parsed using Groq
-* Structured JSON extraction
-* Pydantic v2 schema validation
-* Hallucination guards and output verification
+- Raw content parsed with Groq (llama-3.1-8b-instant)
+- Pydantic v2 schema validation and hallucination guards
 
 ### Prediction Model
-
-* Dixon-Coles statistical model
-* Monte Carlo simulations (10,000 runs)
-* XGBoost with contextual football features
-* Continuous retraining after completed matches
+- Dixon-Coles statistical model
+- Monte Carlo simulation (10,000 runs per match)
+- XGBoost classifier, 24 contextual features
+- Retrained after every completed match, chronological train/test split
 
 ### Voting System
-
-* One vote per match per browser fingerprint
-* Voting locks at 85 minutes
-* Human predictions tracked alongside AI predictions
+- Browser fingerprinting, trust scoring, 85-minute lock
+- Real infrastructure, minimal real-world adoption — documented as a lesson, not hidden
 
 ### Live Updates
-
-* Server-Sent Events (SSE)
-* Incremental component updates
-* Real-time score and prediction streaming
+- Server-Sent Events (SSE) for real-time score and prediction streaming
 
 ---
 
 ## Technology Stack
 
-| Layer           | Technology                                               |
-| --------------- | -------------------------------------------------------- |
-| Frontend        | Next.js 15, React 19, TypeScript, Tailwind CSS           |
-| Backend         | FastAPI, Python 3.11, SQLAlchemy                         |
-| Database        | PostgreSQL (Render) + Google Sheets archive              |
-| LLM             | Groq — llama-3.1-8b (parsing) + llama-3.3-70b (analysis) |
-| ML              | XGBoost + Dixon-Coles + Monte Carlo                      |
-| MLOps           | MLflow + DVC *(upcoming)*                                |
-| Infrastructure  | Vercel (frontend) + Render (backend)                     |
-| Search Fallback | Tavily + Linkup                                          |
-| Bot Protection  | Cloudflare Turnstile + reCAPTCHA v3 *(upcoming)*         |
-| Alerts          | Telegram Bot                                             |
-
-**Total infrastructure cost: $0/month**
+| Layer | Technology |
+|---|---|
+| Frontend (original) | Next.js 15, React 19, TypeScript, Tailwind CSS |
+| Archive site | Static HTML/CSS/JS (no framework, no backend) |
+| Backend | FastAPI, Python 3.11, SQLAlchemy |
+| Database | Supabase PostgreSQL *(decommissioned)* |
+| LLM | Groq — llama-3.1-8b-instant (parsing) + llama-3.3-70b-versatile (analysis) |
+| ML | XGBoost + Dixon-Coles + Monte Carlo |
+| Infrastructure (during tournament) | Vercel (frontend) + Render (backend, decommissioned) |
 
 ---
 
@@ -135,63 +119,19 @@ The project combines statistical modelling, machine learning, live data pipeline
 
 ```text
 delta26/
-├── assets/
-│   ├── banner.png
-│   ├── home.png
-│   └── logo.png
-│
-├── backend/
-│   ├── main.py          # FastAPI — routes, SSE, admin
-│   ├── fetcher.py       # Async parallel multi-source fetch
-│   ├── parser.py        # Groq parsing + validation
-│   ├── model.py         # Dixon-Coles + Monte Carlo + XGBoost
-│   ├── pipeline.py      # Orchestrator + state management
-│   ├── alerts.py        # Telegram bot alerts
-│   ├── sheets.py        # Google Sheets archive
-│   ├── fixtures.py      # All 104 match definitions
-│   └── health_check.py  # Pre-deploy verification
-│
-└── frontend/
-    ├── src/app/         # Next.js App Router pages
-    ├── src/components/  # Match cards, voting, live score
-    ├── src/hooks/       # SSE connection, fingerprinting
-    └── src/lib/         # API client and state management
+├── backend/           # Original prediction pipeline (Python/FastAPI) — reference only, not runnable
+├── frontend/           # Original Next.js app used during the live tournament
+├── archive-site/       # Static case study page, live at delta26.vercel.app
+└── archive-data/       # Exported match and prediction data (CSV)
 ```
 
 ---
 
-## Build Status
+## Project Status: Archived
 
-| Component          | Status         |
-| ------------------ | -------------- |
-| Backend API        | ✅ Live         |
-| Frontend           | ✅ Deployed     |
-| Database           | ✅ Connected    |
-| Match Cards        | ✅ Completed |
-| Live Data Pipeline | ✅ Connected    |
-| ML Model           | ✅ Updating Live |
-| Voting System      | ✅ Live |
+The tournament ended July 19, 2026. The backend and database have since been decommissioned and API keys rotated. `backend/` and `frontend/` remain in this repo as a record of the actual engineering work — they are not intended to be run, since the live data sources, database, and credentials behind them no longer exist.
 
-Tournament: **June 11 – July 19, 2026**
-Matches: **104**
-Teams: **48**
-
----
-
-## Running Locally
-
-```bash
-git clone https://github.com/AryaBuwa/delta26.git
-cd delta26
-pip install -r requirements.txt
-uvicorn backend.main:app --reload
-```
-
-API documentation:
-
-```text
-http://localhost:8000/docs
-```
+The current, permanent version of this project is the static case study at **[delta26.vercel.app](https://delta26.vercel.app)**.
 
 ---
 
@@ -199,13 +139,13 @@ http://localhost:8000/docs
 
 This is an independent research and engineering project and is not affiliated with, endorsed by, or sponsored by FIFA, UEFA, or any football governing body.
 
-DEΔTA does not facilitate gambling, betting, prizes, or real-money activities.
+Delta26 does not facilitate gambling, betting, prizes, or real-money activities.
 
-All match information, statistics, and commentary are obtained from publicly available sources and are used for educational, research, and experimental purposes only.
+All match information, statistics, and commentary were obtained from publicly available sources and used for educational, research, and experimental purposes only.
 
 ---
 
 <p align="center">
-<strong>AI vs Humans. 104 Matches.</strong><br>
-Built live during the FIFA World Cup 2026.
+<strong>39 days. 104 matches. One continuously learning system.</strong><br>
+Archived · FIFA World Cup 2026
 </p>
