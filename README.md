@@ -24,13 +24,11 @@ Built live during the tournament (June 11 – July 19, 2026).<br>
 </p>
 
 <p align="center">
-
-![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python\&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi\&logoColor=white)
-![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs)
-![XGBoost](https://img.shields.io/badge/XGBoost-ML-black)
-![Status](https://img.shields.io/badge/Status-Archived-8b8fa3)
-
+  <img src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/Next.js-000000?logo=nextdotjs" alt="Next.js">
+  <img src="https://img.shields.io/badge/XGBoost-ML-black" alt="XGBoost">
+  <img src="https://img.shields.io/badge/Status-Archived-8b8fa3" alt="Status">
 </p>
 
 ---
