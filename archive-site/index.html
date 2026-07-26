@@ -1040,6 +1040,7 @@
   <div class="footer-copy">DEΔTA26 · FIFA World Cup 2026 · Engineering Case Study</div>
 </footer>
 
+
 <!-- LIGHTBOX -->
 <div class="lightbox" id="lightbox">
   <button class="lightbox-nav lightbox-prev" id="lightboxPrev" aria-label="Previous image">‹</button>
@@ -1180,7 +1181,9 @@
   }
   function renderLightbox() {
     var item = galleryImages[currentIndex];
+    lightboxImg.style.transition = 'opacity 0.25s ease, transform 0.35s ease';
     lightboxImg.style.opacity = 0;
+    lightboxImg.onload = function () { lightboxImg.style.opacity = 1; };
     lightboxImg.src = item.src;
     lightboxImg.alt = item.alt;
     lightboxCaption.textContent = item.alt;
