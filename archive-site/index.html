@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DEΔTA26 — Engineering Case Study · FIFA World Cup 2026 Archive</title>
+<meta name="description" content="An autonomous machine learning system that predicted and retrained across all 104 matches of the FIFA World Cup 2026. Engineering case study, now archived.">
+<style>
+  :root {
+    --bg-base: #0a0b0d;
+    --bg-raised: #111318;
+    --bg-surface: #181c24;
+    --bg-overlay: #1e2230;
+
+    --line-dim: rgba(255,255,255,0.06);
+    --line-soft: rgba(255,255,255,0.10);
+    --line-hard: rgba(255,255,255,0.18);
+
+    --text-primary: #f1f1f1;
+    --text-muted: #8b8fa3;
+    --text-dim: #4d5163;
+
+    --accent: #e8ff47;
+    --accent-green: #4ade80;
+    --accent-blue: #56b6ff;
+    --accent-orange: #ffa94d;
+    --accent-red: #f87171;
+
+    --mono: 'JetBrains Mono', 'Fira Mono', 'Cascadia Code', monospace;
+    --sans: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--sans);
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  a { color: inherit; }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* ── SCROLL PROGRESS ── */
+  .progress-track {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%;
+    height: 2px;
+    background: transparent;
+    z-index: 100;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+  }
+
+  /* ── NOTICE BANNER ── */
+  .notice {
+    background: rgba(232,255,71,0.06);
+    border-bottom: 1px solid rgba(232,255,71,0.15);
+    padding: 10px 24px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+  }
+
+  /* ── NAV ── */
+  nav {
+    position: sticky;
+    top: 2px;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 40px;
+    border-bottom: 1px solid var(--line-dim);
+    background: rgba(10,11,13,0.85);
+    backdrop-filter: blur(10px);
+  }
+
+  .wordmark {
+    font-family: var(--sans);
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: -0.03em;
+    color: var(--text-primary);
+    text-decoration: none;
+  }
+  .wordmark span { color: var(--accent); }
+
+  .nav-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+
+  /* ── SIDE TOC (desktop only) ── */
+  .toc {
+    position: fixed;
+    left: 28px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .toc a {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    text-decoration: none;
+    transition: color 0.25s ease;
+  }
+  .toc a .dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: background 0.25s ease, box-shadow 0.25s ease;
+    flex-shrink: 0;
+  }
+  .toc a .label {
+    opacity: 0;
+    transform: translateX(-6px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    white-space: nowrap;
+  }
+  .toc a:hover .label,
+  .toc a.active .label { opacity: 1; transform: translateX(0); }
+  .toc a.active { color: var(--accent); }
+  .toc a.active .dot {
+    background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(232,255,71,0.15);
+  }
+  @media (max-width: 1180px) { .toc { display: none; } }
+
+  /* ── HERO ── */
+  .hero {
+    padding: 100px 40px 60px;
+    max-width: 900px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .hero-eyebrow {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 20px;
+    display: block;
+  }
+
+  .hero-title {
+    font-family: var(--sans);
+    font-size: clamp(48px, 10vw, 96px);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 0.95;
+    color: var(--text-primary);
+    margin-bottom: 20px;
+  }
+  .hero-title span { color: var(--accent); }
+
+  .hero-desc {
+    font-size: 16px;
+    color: var(--text-muted);
+    max-width: 540px;
+    margin: 0 auto 40px;
+    line-height: 1.7;
+  }
+
+  .hero-stat-row {
+    display: flex;
+    justify-content: center;
+    gap: 0;
+    flex-wrap: wrap;
+    margin-bottom: 44px;
+  }
+  .hero-stat {
+    padding: 0 28px;
+    border-right: 1px solid var(--line-soft);
+  }
+  .hero-stat:last-child { border-right: none; }
+  .hero-stat-value {
+    font-family: var(--mono);
+    font-size: 22px;
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+  .hero-stat-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  .hero-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--bg-base);
+    background: var(--accent);
+    padding: 13px 26px;
+    border-radius: 3px;
+    text-decoration: none;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .hero-cta:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(232,255,71,0.18);
+  }
+
+  /* ── SECTION ── */
+  section {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 72px 40px;
+    border-top: 1px solid var(--line-dim);
+    scroll-margin-top: 80px;
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 20px;
+    display: block;
+  }
+
+  h2 {
+    font-family: var(--sans);
+    font-size: clamp(24px, 4vw, 34px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--text-primary);
+    margin-bottom: 28px;
+    line-height: 1.15;
+  }
+
+  .lede {
+    font-size: 15px;
+    color: var(--text-muted);
+    line-height: 1.8;
+    max-width: 680px;
+    margin-bottom: 18px;
+  }
+  .lede strong { color: var(--text-primary); font-weight: 600; }
+
+  /* ── REVEAL ANIMATION ── */
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.7s ease, transform 0.7s ease; }
+  .reveal-left { opacity: 0; transform: translateX(-18px); transition: opacity 0.7s ease, transform 0.7s ease; }
+  .reveal-right { opacity: 0; transform: translateX(18px); transition: opacity 0.7s ease, transform 0.7s ease; }
+  .reveal.is-visible, .reveal-left.is-visible, .reveal-right.is-visible {
+    opacity: 1; transform: translate(0,0);
+  }
+
+  /* ── GENERIC CARD GRID ── */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .card {
+    background: var(--bg-raised);
+    border: 1px solid var(--line-soft);
+    border-radius: 4px;
+    padding: 20px;
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(232,255,71,0.3);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  }
+  .card-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+  .card-body {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    line-height: 1.7;
+  }
+
+  /* ── ARCHITECTURE DIAGRAM ── */
+  .arch-wrap {
+    background: var(--bg-raised);
+    border: 1px solid var(--line-soft);
+    border-radius: 6px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .arch-wrap svg { width: 100%; height: auto; display: block; }
+  .diagram-line {
+    stroke: var(--line-hard);
+    stroke-width: 1.5;
+    fill: none;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    transition: stroke-dashoffset 1.4s ease;
+  }
+  .arch-wrap.is-visible .diagram-line { stroke-dashoffset: 0; }
+  .node-box {
+    fill: var(--bg-surface);
+    stroke: var(--line-soft);
+    stroke-width: 1;
+  }
+  .node-box.sub { fill: var(--bg-overlay); }
+  .node-box.accent-box { stroke: rgba(232,255,71,0.35); }
+  .node-text {
+    fill: var(--text-primary);
+    font-family: var(--mono);
+    font-size: 12px;
+    text-anchor: middle;
+  }
+  .node-text.sub { font-size: 10.5px; fill: var(--text-muted); }
+  .node-text.accent { fill: var(--accent); }
+
+  /* ── TECH GRID (8 cards) ── */
+  .tech-grid { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+
+  /* ── TIMELINE (vertical) ── */
+  .timeline { position: relative; padding-left: 28px; }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 4px; top: 6px; bottom: 6px;
+    width: 1px;
+    background: var(--line-soft);
+  }
+  .timeline-item { position: relative; padding-bottom: 28px; }
+  .timeline-item:last-child { padding-bottom: 0; }
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -28px; top: 4px;
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--bg-base);
+    border: 2px solid var(--text-dim);
+  }
+  .timeline-item.milestone::before {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+  .timeline-date {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  .timeline-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 3px;
+  }
+  .timeline-sub {
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+
+  /* ── RESULTS METRIC GRID ── */
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1px;
+    background: var(--line-dim);
+    border: 1px solid var(--line-dim);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 32px;
+  }
+  .metric-cell { background: var(--bg-raised); padding: 22px 20px; }
+  .metric-value {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 500;
+    color: var(--text-primary);
+    line-height: 1;
+  }
+  .metric-value.accent { color: var(--accent); }
+  .metric-value.green { color: var(--accent-green); }
+  .metric-value.blue { color: var(--accent-blue); }
+  .metric-label {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-top: 6px;
+  }
+
+  /* ── BREAKDOWN BAR ── */
+  .breakdown-bar { display: flex; height: 44px; border-radius: 3px; overflow: hidden; margin-bottom: 20px; }
+  .bar-seg {
+    display: flex; align-items: center; padding: 0 16px;
+    font-family: var(--mono); font-size: 12.5px; font-weight: 500;
+  }
+  .bar-correct { background: rgba(74,222,128,0.16); color: var(--accent-green); width: 46.2%; border-right: 1px solid var(--bg-base); }
+  .bar-incorrect { background: rgba(248,113,113,0.10); color: var(--accent-red); flex: 1; }
+
+  .mini-list { display: flex; flex-direction: column; gap: 1px; margin-bottom: 8px; }
+  .mini-row {
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px;
+    padding: 9px 14px; background: var(--bg-raised);
+    font-family: var(--mono); font-size: 11px;
+  }
+  .mini-row span:first-child { text-align: left; }
+  .mini-row span:nth-child(2) { text-align: center; color: var(--text-muted); }
+  .mini-row span:last-child { justify-self: end; }
+  .mini-row:first-child { border-radius: 3px 3px 0 0; }
+  .mini-row:last-child { border-radius: 0 0 3px 3px; }
+  .mini-tag { font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 7px; border-radius: 2px; }
+  .tag-correct { background: rgba(74,222,128,0.1); color: var(--accent-green); }
+  .tag-wrong { background: rgba(248,113,113,0.1); color: var(--accent-red); }
+  .list-label {
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-dim); margin: 22px 0 8px;
+  }
+
+  /* ── METRICS EXPLAINED ── */
+  .explain-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .explain-card {
+    background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 5px; padding: 24px;
+  }
+  .explain-num { font-family: var(--mono); font-size: 34px; color: var(--accent); font-weight: 500; margin-bottom: 10px; }
+  .explain-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
+  .explain-desc { font-size: 12.5px; color: var(--text-muted); line-height: 1.7; }
+
+  /* ── LEARNING CURVE ── */
+  .curve-container { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 5px; padding: 28px; margin-bottom: 24px; }
+  .curve-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .curve-row:last-child { margin-bottom: 0; }
+  .curve-tag { font-family: var(--mono); font-size: 10px; color: var(--text-muted); width: 88px; flex-shrink: 0; }
+  .curve-track { position: relative; height: 6px; background: var(--bg-overlay); border-radius: 3px; flex: 1; overflow: hidden; }
+  .curve-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent-blue), var(--accent)); width: 0%; transition: width 1.4s ease; }
+  .curve-pct { font-family: var(--mono); font-size: 12px; color: var(--text-muted); width: 44px; text-align: right; flex-shrink: 0; }
+
+  /* ── LESSONS ── */
+  .lessons-list { display: flex; flex-direction: column; gap: 1px; }
+  .lesson-row {
+    background: var(--bg-raised); padding: 20px 22px; display: flex; gap: 18px; align-items: flex-start;
+  }
+  .lesson-row:first-child { border-radius: 4px 4px 0 0; }
+  .lesson-row:last-child { border-radius: 0 0 4px 4px; }
+  .lesson-index { font-family: var(--mono); font-size: 11px; color: var(--text-dim); flex-shrink: 0; padding-top: 2px; }
+  .lesson-title { font-size: 14.5px; font-weight: 600; color: var(--text-primary); margin-bottom: 5px; }
+  .lesson-desc { font-size: 12.5px; color: var(--text-muted); line-height: 1.7; }
+
+  /* ── JOURNEY PHASES ── */
+  .phase-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 24px; }
+  .phase-card { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 4px; padding: 18px; }
+  .phase-num { font-family: var(--mono); font-size: 10px; color: var(--accent); letter-spacing: 0.1em; margin-bottom: 8px; }
+  .phase-title { font-size: 13.5px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
+  .phase-desc { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+
+  /* ── GALLERY ── */
+  .gallery-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .gallery-item {
+    position: relative; border-radius: 5px; overflow: hidden;
+    border: 1px solid var(--line-soft); background: var(--bg-raised);
+    aspect-ratio: 4 / 3; cursor: pointer;
+  }
+  .mockup-chrome {
+    height: 22px; background: var(--bg-overlay); display: flex; align-items: center; gap: 5px; padding: 0 10px;
+    border-bottom: 1px solid var(--line-dim);
+  }
+  .mockup-chrome span { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); }
+  .mockup-body { padding: 16px; height: calc(100% - 22px); display: flex; flex-direction: column; gap: 8px; }
+  .mockup-block { background: var(--bg-overlay); border-radius: 3px; }
+  .gallery-overlay {
+    position: absolute; inset: 0; background: rgba(10,11,13,0.82);
+    display: flex; align-items: flex-end; padding: 16px;
+    opacity: 0; transition: opacity 0.25s ease;
+  }
+  .gallery-item:hover .gallery-overlay { opacity: 1; }
+  .gallery-item:hover .mockup-body { transform: scale(1.03); transition: transform 0.4s ease; }
+  .gallery-caption { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+
+  /* ── REFLECTION / ARCHIVE ── */
+  .note-card {
+    background: var(--bg-raised); border: 1px solid var(--line-soft); border-left: 3px solid var(--accent);
+    border-radius: 4px; padding: 30px;
+  }
+  .note-card p { font-size: 14.5px; color: var(--text-muted); line-height: 1.8; margin-bottom: 14px; }
+  .note-card p:last-child { margin-bottom: 0; }
+  .note-card strong { color: var(--text-primary); font-weight: 600; }
+
+  .archive-block {
+    background: var(--bg-raised); border: 1px solid rgba(232,255,71,0.2); border-radius: 5px; padding: 30px;
+    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  }
+  .archive-status {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); background: rgba(232,255,71,0.08); border: 1px solid rgba(232,255,71,0.25);
+    padding: 6px 12px; border-radius: 3px; flex-shrink: 0;
+  }
+  .archive-text { font-size: 13px; color: var(--text-muted); line-height: 1.7; flex: 1; min-width: 240px; }
+
+  /* ── FOOTER ── */
+  footer {
+    border-top: 1px solid var(--line-dim);
+    padding: 32px 40px;
+    max-width: 900px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .footer-links { display: flex; gap: 24px; }
+  .footer-links a { font-family: var(--mono); font-size: 10px; color: var(--text-muted); text-decoration: none; letter-spacing: 0.1em; transition: color 0.2s ease; }
+  .footer-links a:hover { color: var(--accent); }
+  .footer-copy { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 600px) {
+    nav, section, footer { padding-left: 20px; padding-right: 20px; }
+    .hero { padding: 56px 20px 40px; }
+    .metric-grid { grid-template-columns: 1fr 1fr; }
+    .hero-stat { padding: 0 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+
+<!-- NOTICE -->
+<div class="notice">
+  This page is a static engineering archive. The live backend and database were retired after the tournament ended. All data reflects the tournament as it happened.
+</div>
+
+<!-- NAV -->
+<nav>
+  <a href="#" class="wordmark">DE<span>Δ</span>TA26</a>
+  <div class="nav-meta">FIFA WORLD CUP 2026 · ARCHIVED</div>
+</nav>
+
+<!-- SIDE TOC -->
+<div class="toc" id="toc">
+  <a href="#overview" data-target="overview"><span class="dot"></span><span class="label">Overview</span></a>
+  <a href="#architecture" data-target="architecture"><span class="dot"></span><span class="label">Architecture</span></a>
+  <a href="#technology" data-target="technology"><span class="dot"></span><span class="label">Technology</span></a>
+  <a href="#timeline" data-target="timeline"><span class="dot"></span><span class="label">Timeline</span></a>
+  <a href="#results" data-target="results"><span class="dot"></span><span class="label">Results</span></a>
+  <a href="#metrics" data-target="metrics"><span class="dot"></span><span class="label">Metrics</span></a>
+  <a href="#learning" data-target="learning"><span class="dot"></span><span class="label">Learning Curve</span></a>
+  <a href="#challenges" data-target="challenges"><span class="dot"></span><span class="label">Challenges</span></a>
+  <a href="#lessons" data-target="lessons"><span class="dot"></span><span class="label">Lessons</span></a>
+  <a href="#journey" data-target="journey"><span class="dot"></span><span class="label">Journey</span></a>
+  <a href="#gallery" data-target="gallery"><span class="dot"></span><span class="label">Gallery</span></a>
+  <a href="#reflection" data-target="reflection"><span class="dot"></span><span class="label">Reflection</span></a>
+  <a href="#archived" data-target="archived"><span class="dot"></span><span class="label">Archive</span></a>
+</div>
+
+<!-- HERO -->
+<div class="hero">
+  <span class="hero-eyebrow">Engineering Case Study · Archived</span>
+  <div class="hero-title">DE<span>Δ</span>TA26</div>
+  <p class="hero-desc">
+    An autonomous machine learning system that experienced the FIFA World Cup 2026 one match at a time — predicting, then retraining, then predicting again, across all 104 matches of the tournament.
+  </p>
+  <div class="hero-stat-row">
+    <div class="hero-stat"><div class="hero-stat-value">39</div><div class="hero-stat-label">Days</div></div>
+    <div class="hero-stat"><div class="hero-stat-value">104</div><div class="hero-stat-label">Matches</div></div>
+    <div class="hero-stat"><div class="hero-stat-value">48</div><div class="hero-stat-label">Teams</div></div>
+    <div class="hero-stat"><div class="hero-stat-value">Archived</div><div class="hero-stat-label">Status</div></div>
+  </div>
+  <a href="#overview" class="hero-cta">Explore Project →</a>
+</div>
+
+<!-- 1. OVERVIEW -->
+<section id="overview">
+  <span class="section-label reveal">01 — Overview</span>
+  <h2 class="reveal">A model that learned in public.</h2>
+  <p class="lede reveal">
+    Delta26 was a real-time prediction system that ran across every one of the 104 matches in the 2026 FIFA World Cup. Before each match it produced a prediction; after each match, it retrained on the newly completed result before the next kickoff.
+  </p>
+  <p class="lede reveal">
+    <strong>Published predictions never changed.</strong> Retraining only ever affected how the model would perform on matches still to come — never the record of what it had already predicted. That distinction was the point of the project: not to build the most accurate football model possible, but to observe how a continuously learning system actually behaves when it's tested live, in public, for 39 consecutive days.
+  </p>
+</section>
+
+<!-- 2. ARCHITECTURE -->
+<section id="architecture">
+  <span class="section-label reveal">02 — Architecture</span>
+  <h2 class="reveal">How a prediction moved from raw data to the screen.</h2>
+  <p class="lede reveal">Ten layers, from live data collection through to the interface, coordinated so that every match moved through the same pipeline — regardless of whether it was a group-stage opener or the final.</p>
+
+  <div class="arch-wrap reveal" id="archWrap">
+    <svg viewBox="0 0 640 840" xmlns="http://www.w3.org/2000/svg">
+      <!-- connecting lines -->
+      <line class="diagram-line" x1="320" y1="64" x2="320" y2="100" pathLength="1"/>
+      <line class="diagram-line" x1="320" y1="144" x2="320" y2="180" pathLength="1"/>
+      <line class="diagram-line" x1="320" y1="224" x2="320" y2="260" pathLength="1"/>
+      <line class="diagram-line" x1="320" y1="304" x2="320" y2="340" pathLength="1"/>
+      <line class="diagram-line" x1="320" y1="384" x2="320" y2="410" pathLength="1"/>
+      <line class="diagram-line" x1="110" y1="410" x2="530" y2="410" pathLength="1"/>
+      <line class="diagram-line" x1="110" y1="410" x2="110" y2="430" pathLength="1"/>
+      <line class="diagram-line" x1="320" y1="410" x2="320" y2="430" pathLength="1"/>
+      <line class="diagram-line" x1="530" y1="410" x2="530" y2="430" pathLength="1"/>
+      <line class="diagram-line" x1="110" y1="470" x2="110" y2="495" pathLength="1"/>
+      <line class="diagram-line" x1="320" y1="470" x2="320" y2="495" pathLength="1"/>
+      <line class="diagram-line" x1="530" y1="470" x2="530" y2="495" pathLength="1"/>
+      <line class="diagram-line" x1="110" y1="495" x2="530" y2="495" pathLength="1"/>
+      <line class="diagram-line" x1="320" y1="495" x2="320" y2="520" pathLength="1"/>
+      <line class="diagram-line" x1="320" y1="564" x2="320" y2="600" pathLength="1"/>
+      <line class="diagram-line" x1="320" y1="644" x2="320" y2="680" pathLength="1"/>
+      <line class="diagram-line" x1="320" y1="724" x2="320" y2="760" pathLength="1"/>
+
+      <!-- main chain nodes -->
+      <rect class="node-box" x="200" y="20" width="240" height="44" rx="6"/>
+      <text class="node-text" x="320" y="47">Internet</text>
+
+      <rect class="node-box" x="200" y="100" width="240" height="44" rx="6"/>
+      <text class="node-text" x="320" y="127">Live Data Collection</text>
+
+      <rect class="node-box" x="200" y="180" width="240" height="44" rx="6"/>
+      <text class="node-text" x="320" y="207">Validation</text>
+
+      <rect class="node-box" x="200" y="260" width="240" height="44" rx="6"/>
+      <text class="node-text" x="320" y="287">Feature Engineering</text>
+
+      <rect class="node-box accent-box" x="200" y="340" width="240" height="44" rx="6"/>
+      <text class="node-text accent" x="320" y="367">Prediction Engine</text>
+
+      <!-- sub-engines -->
+      <rect class="node-box sub" x="30" y="430" width="160" height="40" rx="5"/>
+      <text class="node-text sub" x="110" y="454">Dixon-Coles</text>
+
+      <rect class="node-box sub" x="240" y="430" width="160" height="40" rx="5"/>
+      <text class="node-text sub" x="320" y="454">Monte Carlo</text>
+
+      <rect class="node-box sub" x="450" y="430" width="160" height="40" rx="5"/>
+      <text class="node-text sub" x="530" y="454">XGBoost</text>
+
+      <rect class="node-box" x="200" y="520" width="240" height="44" rx="6"/>
+      <text class="node-text" x="320" y="547">Groq Analysis</text>
+
+      <rect class="node-box" x="200" y="600" width="240" height="44" rx="6"/>
+      <text class="node-text" x="320" y="627">Database</text>
+
+      <rect class="node-box" x="200" y="680" width="240" height="44" rx="6"/>
+      <text class="node-text" x="320" y="707">FastAPI</text>
+
+      <rect class="node-box accent-box" x="200" y="760" width="240" height="44" rx="6"/>
+      <text class="node-text accent" x="320" y="787">Next.js</text>
+    </svg>
+  </div>
+  <p class="lede reveal" style="font-size:13px;">
+    Live scores entered through six confirmed sources with a search-API fallback, were validated against hallucination guards, converted into 24 contextual features, and run through three prediction methods in parallel before an LLM layer generated human-readable context for the frontend.
+  </p>
+</section>
+
+<!-- 3. TECHNOLOGY -->
+<section id="technology">
+  <span class="section-label reveal">03 — Technology</span>
+  <h2 class="reveal">The stack, end to end.</h2>
+  <div class="card-grid tech-grid">
+    <div class="card reveal"><div class="card-title">Backend</div><div class="card-body">Python 3.11 · FastAPI · Uvicorn · APScheduler · SQLAlchemy</div></div>
+    <div class="card reveal"><div class="card-title">Frontend</div><div class="card-body">Next.js 15 · React 19 · TypeScript · Tailwind CSS 3 · Zustand · Recharts</div></div>
+    <div class="card reveal"><div class="card-title">ML</div><div class="card-body">XGBoost classifier · 24 contextual features · retrained after every match</div></div>
+    <div class="card reveal"><div class="card-title">Statistics</div><div class="card-body">Dixon-Coles Poisson goal model</div></div>
+    <div class="card reveal"><div class="card-title">Simulation</div><div class="card-body">Monte Carlo · 10,000 runs per match</div></div>
+    <div class="card reveal"><div class="card-title">LLM</div><div class="card-body">Groq · llama-3.1-8b-instant (parsing) · llama-3.3-70b-versatile (briefs)</div></div>
+    <div class="card reveal"><div class="card-title">Database</div><div class="card-body">Supabase PostgreSQL · 7 tables</div></div>
+    <div class="card reveal"><div class="card-title">Deployment</div><div class="card-body">Render (backend) · Vercel (frontend) · Cloudflare</div></div>
+  </div>
+</section>
+
+<!-- 4. TIMELINE -->
+<section id="timeline">
+  <span class="section-label reveal">04 — Timeline</span>
+  <h2 class="reveal">39 days, one continuous run.</h2>
+  <div class="timeline">
+    <div class="timeline-item milestone reveal-left">
+      <div class="timeline-date">June 11</div>
+      <div class="timeline-title">Opening Match</div>
+      <div class="timeline-sub">The pipeline goes live for match 1 of 104.</div>
+    </div>
+    <div class="timeline-item reveal-left">
+      <div class="timeline-date">June 11 – 28</div>
+      <div class="timeline-title">Group Stage</div>
+      <div class="timeline-sub">72 matches. The model retrains after each one, building its first read on team strength.</div>
+    </div>
+    <div class="timeline-item reveal-left">
+      <div class="timeline-date">June 28 – July 8</div>
+      <div class="timeline-title">Knockout Stage</div>
+      <div class="timeline-sub">Round of 32 and Round of 16 — 24 matches, single elimination.</div>
+    </div>
+    <div class="timeline-item reveal-left">
+      <div class="timeline-date">July 9 – 12</div>
+      <div class="timeline-title">Quarter-Finals</div>
+      <div class="timeline-sub">Live score fetching moves to a search-API fallback as JavaScript-rendered sources become unreliable.</div>
+    </div>
+    <div class="timeline-item reveal-left">
+      <div class="timeline-date">July 14 – 15</div>
+      <div class="timeline-title">Semi-Finals</div>
+      <div class="timeline-sub">Spain and Argentina both advance to the final.</div>
+    </div>
+    <div class="timeline-item milestone reveal-left">
+      <div class="timeline-date">July 19</div>
+      <div class="timeline-title">Final — Archived</div>
+      <div class="timeline-sub">Spain 1–0 Argentina, after extra time. The system is retired the same week.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 5. RESULTS -->
+<section id="results">
+  <span class="section-label reveal">05 — Results</span>
+  <h2 class="reveal">The final numbers.</h2>
+
+  <div class="metric-grid">
+    <div class="metric-cell reveal"><div class="metric-value accent countup" data-target="104">0</div><div class="metric-label">Matches Predicted</div></div>
+    <div class="metric-cell reveal"><div class="metric-value countup" data-target="39">0</div><div class="metric-label">Days</div></div>
+    <div class="metric-cell reveal"><div class="metric-value green countup" data-target="48">0</div><div class="metric-label">Correct Predictions</div></div>
+    <div class="metric-cell reveal"><div class="metric-value countup" data-target="46.2" data-decimals="1" data-suffix="%">0</div><div class="metric-label">Tournament Accuracy</div></div>
+    <div class="metric-cell reveal"><div class="metric-value blue countup" data-target="61.9" data-decimals="1" data-suffix="%">0</div><div class="metric-label">Final XGBoost Validation</div></div>
+    <div class="metric-cell reveal"><div class="metric-value countup" data-target="68.4" data-decimals="1" data-suffix="%">0</div><div class="metric-label">Peak Validation Accuracy</div></div>
+    <div class="metric-cell reveal"><div class="metric-value countup" data-target="8">0</div><div class="metric-label">Model Versions</div></div>
+  </div>
+
+  <p class="lede reveal">The model correctly predicted 48 of 104 outcomes — just under a coin flip, and roughly in line with published benchmarks for football prediction models, where match outcomes are famously low-scoring and high-variance.</p>
+
+  <div class="breakdown-bar reveal">
+    <div class="bar-seg bar-correct">✓ 48 correct · 46.2%</div>
+    <div class="bar-seg bar-incorrect">✗ 56 incorrect · 53.8%</div>
+  </div>
+
+  <div class="list-label reveal">Notable upsets the model missed</div>
+  <div class="mini-list reveal">
+    <div class="mini-row"><span>France vs England (3rd place)</span><span>4–6</span><span class="mini-tag tag-wrong">Upset</span></div>
+    <div class="mini-row"><span>Brazil vs Morocco</span><span>1–1</span><span class="mini-tag tag-wrong">AI: Brazil</span></div>
+    <div class="mini-row"><span>Netherlands vs Sweden</span><span>0–0</span><span class="mini-tag tag-wrong">AI: Sweden</span></div>
+  </div>
+
+  <div class="list-label reveal">Correct calls (sample)</div>
+  <div class="mini-list reveal">
+    <div class="mini-row"><span>Sweden vs Tunisia</span><span>5–1</span><span class="mini-tag tag-correct">✓ Correct</span></div>
+    <div class="mini-row"><span>Argentina vs Switzerland (QF)</span><span>3–1</span><span class="mini-tag tag-correct">✓ Correct</span></div>
+    <div class="mini-row"><span>Spain vs France (SF)</span><span>2–0</span><span class="mini-tag tag-correct">✓ Correct</span></div>
+  </div>
+</section>
+
+<!-- 6. METRICS EXPLAINED -->
+<section id="metrics">
+  <span class="section-label reveal">06 — Metrics Explained</span>
+  <h2 class="reveal">Two accuracy numbers, two different questions.</h2>
+  <div class="explain-grid">
+    <div class="explain-card reveal-left">
+      <div class="explain-num">46.2%</div>
+      <div class="explain-title">Tournament match outcome accuracy</div>
+      <div class="explain-desc">The share of all 104 published, pre-match predictions that correctly called the outcome — win, loss, or draw — as it actually happened live. This is the honest, real-world number.</div>
+    </div>
+    <div class="explain-card reveal-right">
+      <div class="explain-num">61.9%</div>
+      <div class="explain-title">Final XGBoost validation accuracy</div>
+      <div class="explain-desc">How accurate the final model version (v8) was on a held-out validation split of completed matches, measured after all retraining was finished. This describes the model, not the live predictions it actually served.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. LEARNING CURVE -->
+<section id="learning">
+  <span class="section-label reveal">07 — Learning Curve</span>
+  <h2 class="reveal">The model got better. Then it got harder.</h2>
+
+  <div class="curve-container reveal" id="curveWrap">
+    <div class="curve-row">
+      <div class="curve-tag">Group Stage</div>
+      <div class="curve-track"><div class="curve-fill" data-width="62.5"></div></div>
+      <div class="curve-pct">62.5%</div>
+    </div>
+    <div class="curve-row">
+      <div class="curve-tag">R32 / R16</div>
+      <div class="curve-track"><div class="curve-fill" data-width="68.4"></div></div>
+      <div class="curve-pct">68.4%</div>
+    </div>
+    <div class="curve-row">
+      <div class="curve-tag">QF + SF</div>
+      <div class="curve-track"><div class="curve-fill" data-width="64.2"></div></div>
+      <div class="curve-pct">64.2%</div>
+    </div>
+    <div class="curve-row">
+      <div class="curve-tag">Final</div>
+      <div class="curve-track"><div class="curve-fill" data-width="61.9"></div></div>
+      <div class="curve-pct">61.9%</div>
+    </div>
+  </div>
+
+  <p class="lede reveal" style="font-size:13px;">
+    Retraining improved accuracy through the group stage, as the model accumulated enough matches to learn genuine team strength. Accuracy peaked at 68.4% right after the Round of 16 — then declined as the knockout rounds paired increasingly evenly matched elite teams, where historical form gives a statistical model far less to work with. More data did not always produce a better real-world prediction. Published predictions stayed frozen throughout — this curve describes the model underneath, not any prediction that was already shown to a viewer.
+  </p>
+</section>
+
+<!-- 8. ENGINEERING CHALLENGES -->
+<section id="challenges">
+  <span class="section-label reveal">08 — Engineering Challenges</span>
+  <h2 class="reveal">What actually broke, and what it took to fix.</h2>
+  <div class="card-grid">
+    <div class="card reveal"><div class="card-title">Continuous Retraining</div><div class="card-body">Model retrained from scratch after every completed match, using a chronological split so no future match ever leaked into training data.</div></div>
+    <div class="card reveal"><div class="card-title">Live Data Collection</div><div class="card-body">JavaScript-rendered sources blocked HTML scraping, so live scores from the quarter-finals onward moved to a search-API fallback.</div></div>
+    <div class="card reveal"><div class="card-title">Prediction Versioning</div><div class="card-body">Eight model versions shipped across the tournament. Published predictions were frozen at serve time, never rewritten by later retraining.</div></div>
+    <div class="card reveal"><div class="card-title">SSE Streaming</div><div class="card-body">Server-Sent Events pushed live match state and predictions to the frontend without polling.</div></div>
+    <div class="card reveal"><div class="card-title">Database Migration</div><div class="card-body">The original free PostgreSQL instance expired mid-tournament. Migrated to a session-pooled connection with zero data loss.</div></div>
+    <div class="card reveal"><div class="card-title">AI Summaries</div><div class="card-body">An LLM layer auto-generated a pre-match brief and post-match debrief for every one of the 104 matches.</div></div>
+    <div class="card reveal"><div class="card-title">Automation</div><div class="card-body">A scheduler ran keep-alive pings, source health checks, and brief generation on a fixed cadence with no manual triggers.</div></div>
+    <div class="card reveal"><div class="card-title">Free-Tier Infrastructure</div><div class="card-body">The entire system ran on free-tier hosting and database plans for all 39 days of the tournament.</div></div>
+    <div class="card reveal"><div class="card-title">Community Voting</div><div class="card-body">Browser fingerprinting, trust scoring, and an 85-minute lock protected a crowd-prediction feature that saw fewer than 20 votes across the entire tournament.</div></div>
+    <div class="card reveal"><div class="card-title">Deployment</div><div class="card-body">Backend and frontend deployed and coordinated separately, behind a shared CDN layer, across the full build.</div></div>
+  </div>
+</section>
+
+<!-- 9. LESSONS LEARNED -->
+<section id="lessons">
+  <span class="section-label reveal">09 — Lessons Learned</span>
+  <h2 class="reveal">What this project actually taught.</h2>
+  <div class="lessons-list">
+    <div class="lesson-row reveal">
+      <div class="lesson-index">01</div>
+      <div>
+        <div class="lesson-title">Historical validation is not real-world performance</div>
+        <div class="lesson-desc">A 61.9% validation accuracy and a 46.2% live accuracy measure different things. A model can be internally consistent and still lose to variance in single-elimination football.</div>
+      </div>
+    </div>
+    <div class="lesson-row reveal">
+      <div class="lesson-index">02</div>
+      <div>
+        <div class="lesson-title">Production ML is mostly software engineering</div>
+        <div class="lesson-desc">Of the system's ten architectural layers, only one directly touched the model. The rest were data fetching, validation, state management, and delivery.</div>
+      </div>
+    </div>
+    <div class="lesson-row reveal">
+      <div class="lesson-index">03</div>
+      <div>
+        <div class="lesson-title">Reliable pipelines matter more than model choice</div>
+        <div class="lesson-desc">The largest accuracy gain in the project came from fixing live data collection, not from any change to the statistical or gradient-boosted models.</div>
+      </div>
+    </div>
+    <div class="lesson-row reveal">
+      <div class="lesson-index">04</div>
+      <div>
+        <div class="lesson-title">Retraining has diminishing returns</div>
+        <div class="lesson-desc">Accuracy peaked after the Round of 16, then declined as the tournament reached its most evenly matched games — regardless of how many additional matches the model had seen.</div>
+      </div>
+    </div>
+    <div class="lesson-row reveal">
+      <div class="lesson-index">05</div>
+      <div>
+        <div class="lesson-title">Building a feature is not the same as getting it used</div>
+        <div class="lesson-desc">The voting system had real infrastructure behind it — fingerprinting, trust scoring, rate limiting — and still saw fewer than 20 votes across 104 matches. Getting someone to visit once is a different problem from getting them to come back, and neither is solved by the engineering alone.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 10. DEVELOPMENT JOURNEY -->
+<section id="journey">
+  <span class="section-label reveal">10 — Development Journey</span>
+  <h2 class="reveal">Built incrementally, over 39 days.</h2>
+  <p class="lede reveal">Delta26 was not built in advance and switched on. Development continued throughout the tournament itself, visible across the project's public GitHub commit history, with the system evolving in response to what broke during live matches.</p>
+
+  <div class="phase-grid">
+    <div class="phase-card reveal">
+      <div class="phase-num">Phase 1</div>
+      <div class="phase-title">Foundation</div>
+      <div class="phase-desc">Data fetcher, parser, and prediction model built before any frontend existed.</div>
+    </div>
+    <div class="phase-card reveal">
+      <div class="phase-num">Phase 2</div>
+      <div class="phase-title">Infrastructure</div>
+      <div class="phase-desc">Database connectivity fixes, numerical stability guards, and deployment issues resolved under live conditions.</div>
+    </div>
+    <div class="phase-card reveal">
+      <div class="phase-num">Phase 3</div>
+      <div class="phase-title">Live Data Redesign</div>
+      <div class="phase-desc">HTML scraping replaced with a search-API fallback once JavaScript rendering made scraping unreliable from the quarter-finals on.</div>
+    </div>
+    <div class="phase-card reveal">
+      <div class="phase-num">Phase 4</div>
+      <div class="phase-title">Sustained Operation</div>
+      <div class="phase-desc">Score updates, retraining, and incremental UX fixes, repeated for every match through to the final.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 11. GALLERY -->
+<section id="gallery">
+  <span class="section-label reveal">11 — Gallery</span>
+  <h2 class="reveal">The interface, frozen in its final state.</h2>
+  <div class="gallery-grid">
+    <div class="gallery-item reveal">
+      <img src="images/homepage-feed.png" alt="Homepage live prediction feed" style="width:100%;height:100%;object-fit:cover;">
+      <div class="gallery-overlay"><div class="gallery-caption">Homepage · Live prediction feed</div></div>
+    </div>
+    <div class="gallery-item reveal">
+      <img src="images/match-ai-indicator.png" alt="Match card showing AI correct or incorrect indicator" style="width:100%;height:100%;object-fit:cover;">
+      <div class="gallery-overlay"><div class="gallery-caption">AI Correct / Incorrect indicator</div></div>
+    </div>
+    <div class="gallery-item reveal">
+      <img src="images/final-debrief.png" alt="Post-match AI debrief for the final" style="width:100%;height:100%;object-fit:cover;">
+      <div class="gallery-overlay"><div class="gallery-caption">Post-match debrief · Final</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 12. REFLECTION -->
+<section id="reflection">
+  <span class="section-label reveal">12 — Reflection</span>
+  <h2 class="reveal">This was never about calling the score.</h2>
+  <div class="note-card reveal">
+    <p>Delta26 was never intended to perfectly predict football — no model reliably does, and 46.2% accuracy against a genuinely low-scoring, high-variance sport was an expected outcome, not a shortfall.</p>
+    <p>The project's actual purpose was to understand how a <strong>continuously learning prediction system</strong> behaves when it operates live, in public, across a full international tournament: what breaks under real data conditions, how retraining actually affects performance match to match, and where the gap sits between a model's offline validation numbers and what it produces under live conditions.</p>
+  </div>
+</section>
+
+<!-- 13. ARCHIVE NOTICE -->
+<section id="archived">
+  <span class="section-label reveal">13 — Archive Notice</span>
+  <h2 class="reveal">Project Status: Archived</h2>
+  <div class="archive-block reveal">
+    <div class="archive-status">Archived</div>
+    <div class="archive-text">The backend and database have been retired now that the tournament has ended, and compute resources have been reallocated. This page is a static, permanent record of the system, its architecture, and its results.</div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-links">
+    <a href="https://github.com/AryaBuwa/delta26">GitHub</a>
+    <a href="#">LinkedIn</a>
+    <a href="#">Portfolio</a>
+    <a href="#" target="_blank" rel="noopener">Questions? →</a>
+  </div>
+  <div class="footer-copy">DEΔTA26 · FIFA World Cup 2026 · Engineering Case Study</div>
+</footer>
+
+<script>
+(function () {
+  // Scroll progress bar
+  var progressFill = document.getElementById('progressFill');
+  function updateProgress() {
+    var scrollTop = window.scrollY;
+    var docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    var pct = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
+    progressFill.style.width = pct + '%';
+  }
+  window.addEventListener('scroll', updateProgress, { passive: true });
+  updateProgress();
+
+  // Reveal on scroll
+  var revealEls = document.querySelectorAll('.reveal, .reveal-left, .reveal-right');
+  var revealObserver = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry, i) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('is-visible');
+        revealObserver.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.15 });
+  revealEls.forEach(function (el, i) {
+    el.style.transitionDelay = (i % 6) * 60 + 'ms';
+    revealObserver.observe(el);
+  });
+
+  // Architecture diagram draw-in
+  var archWrap = document.getElementById('archWrap');
+  if (archWrap) {
+    var archObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          archWrap.classList.add('is-visible');
+          archObserver.unobserve(archWrap);
+        }
+      });
+    }, { threshold: 0.2 });
+    archObserver.observe(archWrap);
+  }
+
+  // Learning curve bar fill
+  var curveWrap = document.getElementById('curveWrap');
+  if (curveWrap) {
+    var curveObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          curveWrap.querySelectorAll('.curve-fill').forEach(function (fill) {
+            fill.style.width = fill.getAttribute('data-width') + '%';
+          });
+          curveObserver.unobserve(curveWrap);
+        }
+      });
+    }, { threshold: 0.3 });
+    curveObserver.observe(curveWrap);
+  }
+
+  // Count-up numbers
+  var countEls = document.querySelectorAll('.countup');
+  var countObserver = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) {
+        animateCount(entry.target);
+        countObserver.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.5 });
+  countEls.forEach(function (el) { countObserver.observe(el); });
+
+  function animateCount(el) {
+    var target = parseFloat(el.getAttribute('data-target'));
+    var decimals = parseInt(el.getAttribute('data-decimals') || '0', 10);
+    var suffix = el.getAttribute('data-suffix') || '';
+    var duration = 1200;
+    var start = null;
+
+    function step(ts) {
+      if (!start) start = ts;
+      var progress = Math.min((ts - start) / duration, 1);
+      var eased = 1 - Math.pow(1 - progress, 3);
+      var value = target * eased;
+      el.textContent = value.toFixed(decimals) + suffix;
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        el.textContent = target.toFixed(decimals) + suffix;
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  // Scrollspy for side TOC
+  var tocLinks = document.querySelectorAll('#toc a');
+  var sections = Array.prototype.slice.call(document.querySelectorAll('section[id]'));
+  var spyObserver = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      var id = entry.target.getAttribute('id');
+      var link = document.querySelector('#toc a[data-target="' + id + '"]');
+      if (!link) return;
+      if (entry.isIntersecting) {
+        tocLinks.forEach(function (l) { l.classList.remove('active'); });
+        link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-40% 0px -55% 0px', threshold: 0 });
+  sections.forEach(function (sec) { spyObserver.observe(sec); });
+})();
+</script>
+
+</body>
+</html>
