@@ -500,10 +500,11 @@
 
   /* ── GALLERY ── */
   .gallery-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .gallery-item { cursor: zoom-in; }
   .gallery-item {
     position: relative; border-radius: 5px; overflow: hidden;
     border: 1px solid var(--line-soft); background: var(--bg-raised);
-    aspect-ratio: 4 / 3; cursor: pointer;
+    aspect-ratio: 4 / 3;
   }
   .mockup-chrome {
     height: 22px; background: var(--bg-overlay); display: flex; align-items: center; gap: 5px; padding: 0 10px;
@@ -540,6 +541,64 @@
     padding: 6px 12px; border-radius: 3px; flex-shrink: 0;
   }
   .archive-text { font-size: 13px; color: var(--text-muted); line-height: 1.7; flex: 1; min-width: 240px; }
+
+  /* ── LIGHTBOX ── */
+  .lightbox {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(10,11,13,0.92);
+    backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0s linear 0.3s;
+  }
+  .lightbox.is-open {
+    opacity: 1; visibility: visible;
+    transition: opacity 0.3s ease, visibility 0s linear 0s;
+  }
+  .lightbox-stage {
+    position: relative;
+    max-width: 88vw; max-height: 82vh;
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+  }
+  .lightbox-img {
+    max-width: 88vw; max-height: 72vh;
+    border-radius: 6px;
+    border: 1px solid var(--line-soft);
+    box-shadow: 0 30px 80px rgba(0,0,0,0.5);
+    transform: scale(0.94);
+    opacity: 0;
+    transition: transform 0.35s ease, opacity 0.35s ease;
+  }
+  .lightbox.is-open .lightbox-img { transform: scale(1); opacity: 1; }
+  .lightbox-caption {
+    font-family: var(--mono); font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;
+  }
+  .lightbox-caption span { color: var(--accent); }
+  .lightbox-close {
+    position: absolute; top: -44px; right: -6px;
+    width: 34px; height: 34px; border-radius: 50%;
+    background: var(--bg-raised); border: 1px solid var(--line-soft);
+    color: var(--text-muted); font-size: 16px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: border-color 0.2s ease, color 0.2s ease;
+  }
+  .lightbox-close:hover { border-color: rgba(232,255,71,0.4); color: var(--accent); }
+  .lightbox-nav {
+    position: fixed; top: 50%; transform: translateY(-50%);
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--bg-raised); border: 1px solid var(--line-soft);
+    color: var(--text-primary); font-size: 18px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+  }
+  .lightbox-nav:hover { border-color: rgba(232,255,71,0.4); color: var(--accent); transform: translateY(-50%) scale(1.06); }
+  .lightbox-prev { left: 24px; }
+  .lightbox-next { right: 24px; }
+  @media (max-width: 700px) {
+    .lightbox-nav { width: 38px; height: 38px; font-size: 15px; }
+    .lightbox-prev { left: 10px; } .lightbox-next { right: 10px; }
+    .lightbox-close { top: -40px; right: 0; }
+  }
 
   /* ── FOOTER ── */
   footer {
@@ -981,6 +1040,17 @@
   <div class="footer-copy">DEΔTA26 · FIFA World Cup 2026 · Engineering Case Study</div>
 </footer>
 
+<!-- LIGHTBOX -->
+<div class="lightbox" id="lightbox">
+  <button class="lightbox-nav lightbox-prev" id="lightboxPrev" aria-label="Previous image">‹</button>
+  <div class="lightbox-stage">
+    <button class="lightbox-close" id="lightboxClose" aria-label="Close">✕</button>
+    <img class="lightbox-img" id="lightboxImg" src="" alt="">
+    <div class="lightbox-caption"><span id="lightboxIndex">1 / 3</span> — <span id="lightboxCaption"></span></div>
+  </div>
+  <button class="lightbox-nav lightbox-next" id="lightboxNext" aria-label="Next image">›</button>
+</div>
+
 <script>
 (function () {
   // Scroll progress bar
@@ -1088,6 +1158,50 @@
     });
   }, { rootMargin: '-40% 0px -55% 0px', threshold: 0 });
   sections.forEach(function (sec) { spyObserver.observe(sec); });
+  // Lightbox
+  var galleryImages = Array.prototype.map.call(document.querySelectorAll('.gallery-item img'), function (img) {
+    return { src: img.getAttribute('src'), alt: img.getAttribute('alt') };
+  });
+  var lightbox = document.getElementById('lightbox');
+  var lightboxImg = document.getElementById('lightboxImg');
+  var lightboxCaption = document.getElementById('lightboxCaption');
+  var lightboxIndexEl = document.getElementById('lightboxIndex');
+  var currentIndex = 0;
+
+  function openLightbox(i) {
+    currentIndex = i;
+    renderLightbox();
+    lightbox.classList.add('is-open');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeLightbox() {
+    lightbox.classList.remove('is-open');
+    document.body.style.overflow = '';
+  }
+  function renderLightbox() {
+    var item = galleryImages[currentIndex];
+    lightboxImg.style.opacity = 0;
+    lightboxImg.src = item.src;
+    lightboxImg.alt = item.alt;
+    lightboxCaption.textContent = item.alt;
+    lightboxIndexEl.textContent = (currentIndex + 1) + ' / ' + galleryImages.length;
+  }
+  function showNext() { currentIndex = (currentIndex + 1) % galleryImages.length; renderLightbox(); }
+  function showPrev() { currentIndex = (currentIndex - 1 + galleryImages.length) % galleryImages.length; renderLightbox(); }
+
+  document.querySelectorAll('.gallery-item').forEach(function (el, i) {
+    el.addEventListener('click', function () { openLightbox(i); });
+  });
+  document.getElementById('lightboxClose').addEventListener('click', closeLightbox);
+  document.getElementById('lightboxNext').addEventListener('click', showNext);
+  document.getElementById('lightboxPrev').addEventListener('click', showPrev);
+  lightbox.addEventListener('click', function (e) { if (e.target === lightbox) closeLightbox(); });
+  document.addEventListener('keydown', function (e) {
+    if (!lightbox.classList.contains('is-open')) return;
+    if (e.key === 'Escape') closeLightbox();
+    if (e.key === 'ArrowRight') showNext();
+    if (e.key === 'ArrowLeft') showPrev();
+  });
 })();
 </script>
 
