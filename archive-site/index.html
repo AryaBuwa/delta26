@@ -600,6 +600,15 @@
     .lightbox-close { top: -40px; right: 0; }
   }
 
+  .tally-wrap {
+    background: var(--bg-raised);
+    border: 1px solid var(--line-soft);
+    border-radius: 6px;
+    padding: 6px;
+    overflow: hidden;
+  }
+  .tally-wrap iframe { display: block; width: 100%; border: none; }
+
   /* ── FOOTER ── */
   footer {
     border-top: 1px solid var(--line-dim);
@@ -656,6 +665,7 @@
   <a href="#gallery" data-target="gallery"><span class="dot"></span><span class="label">Gallery</span></a>
   <a href="#reflection" data-target="reflection"><span class="dot"></span><span class="label">Reflection</span></a>
   <a href="#archived" data-target="archived"><span class="dot"></span><span class="label">Archive</span></a>
+  <a href="#questions" data-target="questions"><span class="dot"></span><span class="label">Questions</span></a>
 </div>
 
 <!-- HERO -->
@@ -1030,16 +1040,30 @@
   </div>
 </section>
 
+<!-- 14. QUESTIONS -->
+<section id="questions">
+  <span class="section-label reveal">14 — Questions</span>
+  <h2 class="reveal">Have a question about how this was built?</h2>
+  <p class="lede reveal">Whether it's the architecture, a specific engineering decision, or something that didn't make it into this page — ask below.</p>
+
+  <div class="tally-wrap reveal">
+    <iframe data-tally-src="https://tally.so/embed/obY6q1?alignLeft=1&hideTitle=1&transparentBackground=1&dynamicHeight=1"
+      loading="lazy"
+      width="100%"
+      height="320"
+      title="Questions about Delta26">
+    </iframe>
+  </div>
+</section>
+
 <!-- FOOTER -->
 <footer>
   <div class="footer-links">
     <a href="https://github.com/AryaBuwa/delta26">GitHub</a>
     <a href="https://www.linkedin.com/in/arya-buwa-329159191/">LinkedIn</a>
-    <a href="https://tally.so/r/jag9PQ" target="_blank" rel="noopener">Questions? →</a>
   </div>
   <div class="footer-copy">DEΔTA26 · FIFA World Cup 2026 · Engineering Case Study</div>
 </footer>
-
 
 <!-- LIGHTBOX -->
 <div class="lightbox" id="lightbox">
@@ -1205,6 +1229,28 @@
     if (e.key === 'ArrowRight') showNext();
     if (e.key === 'ArrowLeft') showPrev();
   });
+  // Tally embed loader (official snippet)
+  (function (d) {
+    var w = "https://tally.so/widgets/embed.js";
+    var v = function () {
+      if (typeof Tally !== "undefined") {
+        Tally.loadEmbeds();
+      } else {
+        d.querySelectorAll("iframe[data-tally-src]:not([src])").forEach(function (e) {
+          e.src = e.dataset.tallySrc;
+        });
+      }
+    };
+    if (typeof Tally !== "undefined") {
+      v();
+    } else if (d.querySelector('script[src="' + w + '"]') == null) {
+      var s = d.createElement("script");
+      s.src = w;
+      s.onload = v;
+      s.onerror = v;
+      d.body.appendChild(s);
+    }
+  })(document);
 })();
 </script>
 
